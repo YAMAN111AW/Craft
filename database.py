@@ -1,5 +1,7 @@
+# في ملف database.py، استخدم هذا الكود المتوافق:
+
 import os
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean, Float, Text
+from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean, Text, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
@@ -10,8 +12,8 @@ Base = declarative_base()
 class Player(Base):
     __tablename__ = 'players'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String, unique=True, nullable=False)  # تغيير لـ String لتوافق أفضل
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)  # نحتفظ بالـ Integer القديم
     username = Column(String, default="Player")
     level = Column(Integer, default=1)
     xp = Column(Integer, default=0)
@@ -23,30 +25,28 @@ class Player(Base):
     max_hunger = Column(Integer, default=20)
     current_hunger = Column(Integer, default=20)
     
-    # Skills (0-100)
+    # Skills
     strength = Column(Integer, default=0)
     speed = Column(Integer, default=0)
     endurance = Column(Integer, default=0)
     luck = Column(Integer, default=0)
     
-    # Inventory (JSON)
-    inventory = Column(Text, default=lambda: json.dumps({f"slot_{i}": None for i in range(36)}))
-    
-    # Equipment (JSON)
-    equipment = Column(Text, default=lambda: json.dumps({
+    # Inventory - نستخدم JSON لكن نتعامل معه بحذر
+    inventory = Column(JSON, default=lambda: {f"slot_{i}": None for i in range(36)})
+    equipment = Column(JSON, default=lambda: {
         "helmet": None, "chestplate": None, "leggings": None, 
         "boots": None, "weapon": None, "shield": None
-    }))
+    })
     
     # Location & Status
     current_area = Column(String, default="forest")
     last_action = Column(DateTime, default=datetime.utcnow)
     last_sleep = Column(DateTime, default=datetime.utcnow)
-    status_effects = Column(Text, default="[]")
+    status_effects = Column(JSON, default=list)
     
     # Achievements
-    titles = Column(Text, default="[]")
-    recipes_unlocked = Column(Text, default='["level_1"]')
+    titles = Column(JSON, default=list)
+    recipes_unlocked = Column(JSON, default=lambda: ["level_1"])
     defeated_ender_dragon = Column(Boolean, default=False)
     
     # Dragon fight temp data
@@ -57,70 +57,89 @@ class Player(Base):
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # تحويل النصوص إلى JSON عند الحاجة
-        if isinstance(self.inventory, str):
-            self.inventory = self.inventory
-        if isinstance(self.equipment, str):
-            self.equipment = self.equipment
-    
     def get_inventory(self):
-        """الحصول على المخزون كـ dict"""
+        """الحصول على المخزون بشكل آمن"""
+        if self.inventory is None:
+            self.inventory = {f"slot_{i}": None for i in range(36)}
         if isinstance(self.inventory, str):
-            return json.loads(self.inventory)
+            try:
+                return json.loads(self.inventory)
+            except:
+                return {f"slot_{i}": None for i in range(36)}
         return self.inventory
     
     def set_inventory(self, inv_dict):
         """تعيين المخزون"""
-        self.inventory = json.dumps(inv_dict)
+        self.inventory = inv_dict
     
     def get_equipment(self):
         """الحصول على المعدات"""
+        if self.equipment is None:
+            self.equipment = {"helmet": None, "chestplate": None, "leggings": None, 
+                            "boots": None, "weapon": None, "shield": None}
         if isinstance(self.equipment, str):
-            return json.loads(self.equipment)
+            try:
+                return json.loads(self.equipment)
+            except:
+                return {"helmet": None, "chestplate": None, "leggings": None, 
+                       "boots": None, "weapon": None, "shield": None}
         return self.equipment
     
     def set_equipment(self, equip_dict):
         """تعيين المعدات"""
-        self.equipment = json.dumps(equip_dict)
+        self.equipment = equip_dict
     
     def get_status_effects(self):
         """الحصول على التأثيرات"""
+        if self.status_effects is None:
+            return []
         if isinstance(self.status_effects, str):
-            return json.loads(self.status_effects)
+            try:
+                return json.loads(self.status_effects)
+            except:
+                return []
         return self.status_effects
     
     def set_status_effects(self, effects_list):
         """تعيين التأثيرات"""
-        self.status_effects = json.dumps(effects_list)
+        self.status_effects = effects_list
     
     def get_titles(self):
         """الحصول على الألقاب"""
+        if self.titles is None:
+            return []
         if isinstance(self.titles, str):
-            return json.loads(self.titles)
+            try:
+                return json.loads(self.titles)
+            except:
+                return []
         return self.titles
     
     def set_titles(self, titles_list):
         """تعيين الألقاب"""
-        self.titles = json.dumps(titles_list)
+        self.titles = titles_list
     
     def get_recipes(self):
-        """الحصول على الوصفات المفتوحة"""
+        """الحصول على الوصفات"""
+        if self.recipes_unlocked is None:
+            return ["level_1"]
         if isinstance(self.recipes_unlocked, str):
-            return json.loads(self.recipes_unlocked)
+            try:
+                return json.loads(self.recipes_unlocked)
+            except:
+                return ["level_1"]
         return self.recipes_unlocked
     
     def set_recipes(self, recipes_list):
         """تعيين الوصفات"""
-        self.recipes_unlocked = json.dumps(recipes_list)
+        self.recipes_unlocked = recipes_list
     
     def has_item(self, item_name, amount=1):
-        """التحقق من وجود عنصر في المخزون"""
+        """التحقق من وجود عنصر"""
         inv = self.get_inventory()
         total = 0
         for slot, item_data in inv.items():
-            if item_data and item_data.get("name") == item_name:
+            if item_data and isinstance(item_data, dict) and item_data.get("name") == item_name:
                 total += item_data.get("amount", 0)
         return total >= amount
     
@@ -133,7 +152,7 @@ class Player(Base):
             slot_key = f"slot_{slot}"
             item_data = inv.get(slot_key)
             
-            if item_data and item_data.get("name") == item_name:
+            if item_data and isinstance(item_data, dict) and item_data.get("name") == item_name:
                 current_amount = item_data.get("amount", 0)
                 if current_amount < 64:
                     space = 64 - current_amount
@@ -148,7 +167,7 @@ class Player(Base):
         if amount > 0:
             for slot in range(36):
                 slot_key = f"slot_{slot}"
-                if inv.get(slot_key) is None:
+                if inv.get(slot_key) is None or inv.get(slot_key) == {}:
                     inv[slot_key] = {"name": item_name, "amount": min(amount, 64)}
                     self.set_inventory(inv)
                     return True
@@ -165,7 +184,7 @@ class Player(Base):
             slot_key = f"slot_{slot}"
             item_data = inv.get(slot_key)
             
-            if item_data and item_data.get("name") == item_name:
+            if item_data and isinstance(item_data, dict) and item_data.get("name") == item_name:
                 current = item_data.get("amount", 0)
                 if current <= remaining:
                     inv[slot_key] = None
@@ -183,11 +202,13 @@ class Player(Base):
     
     def can_sleep(self):
         """التحقق من إمكانية النوم"""
+        if self.last_sleep is None:
+            return True
         time_diff = datetime.utcnow() - self.last_sleep
-        return time_diff.total_seconds() >= 43200  # 12 ساعة
+        return time_diff.total_seconds() >= 43200
     
     def add_xp(self, amount):
-        """إضافة خبرة وتحديث المستوى"""
+        """إضافة خبرة"""
         self.xp += amount
         
         while self.xp >= self.level * 10:
@@ -221,19 +242,9 @@ class Player(Base):
         
         self.set_titles(titles)
 
-class WorldEvent(Base):
-    __tablename__ = 'world_events'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String, nullable=False)
-    start_time = Column(DateTime, default=datetime.utcnow)
-    end_time = Column(DateTime)
-    active = Column(Boolean, default=True)
-
 # إعداد قاعدة البيانات
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///minecraft_bot.db')
 
-# تصحيح رابط PostgreSQL إذا لزم الأمر
 if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
@@ -244,37 +255,41 @@ engine = create_engine(
     pool_pre_ping=True
 )
 
-# إنشاء الجداول
+# إنشاء الجداول (فقط إذا لم تكن موجودة)
 Base.metadata.create_all(engine)
 
-# إنشاء جلسة
 Session = sessionmaker(bind=engine)
 
 def get_or_create_player(session, user_id, username=None):
-    """الحصول على لاعب أو إنشائه"""
+    """الحصول على لاعب أو إنشائه - متوافق مع القاعدة القديمة"""
     try:
-        player = session.query(Player).filter_by(user_id=str(user_id)).first()
+        # البحث بـ user_id كـ Integer
+        player = session.query(Player).filter_by(user_id=int(user_id)).first()
         
         if not player:
             player = Player(
-                user_id=str(user_id),
+                user_id=int(user_id),
                 username=username or f"Player_{user_id}"
             )
             session.add(player)
             session.commit()
-            session.refresh(player)
+            return player, True
         
-        return player, False  # False يعني أنه موجود مسبقاً
+        return player, False
+        
     except Exception as e:
         session.rollback()
-        # محاولة إنشاء الجداول مرة أخرى
-        Base.metadata.create_all(engine)
+        print(f"خطأ في get_or_create_player: {e}")
         
-        player = Player(
-            user_id=str(user_id),
-            username=username or f"Player_{user_id}"
-        )
-        session.add(player)
-        session.commit()
-        session.refresh(player)
-        return player, True  # True يعني أنه تم إنشاؤه جديداً
+        # محاولة إنشاء اللاعب من جديد
+        try:
+            player = Player(
+                user_id=int(user_id),
+                username=username or f"Player_{user_id}"
+            )
+            session.add(player)
+            session.commit()
+            return player, True
+        except Exception as e2:
+            print(f"فشل إنشاء اللاعب: {e2}")
+            raise
