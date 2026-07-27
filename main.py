@@ -58,7 +58,7 @@ def main_menu_keyboard():
 @bot.message_handler(commands=['start'])
 def start_command(message):
     try:
-        user_id = message.from_user.id
+        user_id = message.from_user.id  # ✅ بدون str()
         username = message.from_user.username or message.from_user.first_name
         
         player, is_new = get_or_create_player(session, user_id, username)
@@ -111,7 +111,7 @@ def explore_nether_cmd(message):
 
 def process_exploration(message, area_name):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         if not player:
@@ -191,7 +191,7 @@ def village_menu(message):
 @bot.message_handler(func=lambda msg: msg.text == "🏛️ دخول المعبد")
 def temple_start(message):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         result = game.explore_temple(player)
@@ -226,7 +226,7 @@ def temple_start(message):
 @bot.message_handler(func=lambda msg: msg.text == "🎒 مخزوني")
 def show_inventory(message):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         inv = player.get_inventory()
@@ -257,7 +257,7 @@ def show_inventory(message):
 @bot.message_handler(func=lambda msg: msg.text == "🍖 أكل")
 def eat_menu(message):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         inv = player.get_inventory()
@@ -297,7 +297,7 @@ def eat_menu(message):
 @bot.message_handler(func=lambda msg: msg.text == "❤️ حالتي")
 def show_status(message):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         health_bar = "█" * player.current_health + "░" * (player.max_health - player.current_health)
@@ -328,7 +328,7 @@ def show_status(message):
 @bot.message_handler(func=lambda msg: msg.text == "📊 مهاراتي")
 def show_skills(message):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         response = f"""
@@ -389,7 +389,7 @@ def help_cmd(message):
 @bot.message_handler(commands=['buy'])
 def buy_item(message):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         args = message.text.split()
@@ -424,7 +424,7 @@ def buy_item(message):
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     try:
-        user_id = str(call.from_user.id)
+        user_id = call.from_user.id  # ✅ بدون str()
         player, _ = get_or_create_player(session, user_id)
         
         if not player:
