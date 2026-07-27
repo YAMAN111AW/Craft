@@ -1,8 +1,8 @@
 import random
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
-from database import Player, WorldEvent, Session, get_or_create_player
-from world_data import WorldData, Area, Enemy, Resource
+from typing import Dict, Optional
+from database import Player, WorldEvent, Session
+from world_data import WorldData
 
 class GameMechanics:
     def __init__(self, session: Session):
@@ -10,20 +10,17 @@ class GameMechanics:
         self.world_data = WorldData()
     
     def explore_area(self, player: Player, area_name: str) -> Dict:
-        """استكشاف منطقة جديدة"""
         try:
             area = self.world_data.get_area(area_name)
             if not area:
                 return {"error": "المنطقة غير موجودة"}
             
             if player.level < area.level_required:
-                return {"error": f"تحتاج مستوى {area.level_required} لدخول هذه المنطقة"}
+                return {"error": f"تحتاج مستوى {area.level_required}"}
             
-            # حساب وقت الاستكشاف
             explore_time = area.exploration_time
             explore_time *= (1 - player.speed * 0.005)
             
-            # تأثير المعدات
             if player.has_item("compass"):
                 explore_time *= 0.8
             if player.has_item("saddle"):
@@ -31,11 +28,9 @@ class GameMechanics:
             if player.has_item("elytra"):
                 explore_time *= 0.5
             
-            # تقليل الجوع
             hunger_cost = max(1, int(explore_time / 30))
             player.current_hunger = max(0, player.current_hunger - hunger_cost)
             
-            # جمع الموارد
             num_resources = random.randint(3, 5)
             rewards = []
             for _ in range(num_resources):
@@ -45,35 +40,30 @@ class GameMechanics:
                     player.add_item(resource.name, amount)
                     rewards.append(f"{resource.emoji} {resource.name} x{amount}")
             
-            # مواجهة الأعداء (30% فرصة)
             enemy_result = None
             if random.random() < 0.3:
                 enemy = self.world_data.get_random_enemy(area)
                 if enemy:
                     enemy_result = self.fight_enemy(player, enemy)
             
-            # حدث عشوائي (25% فرصة)
             event_result = None
             if random.random() < 0.25 and area.random_events:
                 event_result = self.trigger_random_event(player, area)
             
-            # حساب الخبرة
             xp_gained = random.randint(5, 15) + int(player.luck * 0.2)
             player.add_xp(xp_gained)
             
-            # تحديث آخر نشاط
             player.last_action = datetime.utcnow()
             player.current_area = area_name
             
-            # التحقق من الجوع الحاد
             starvation_msg = None
             if player.current_hunger <= 0:
                 player.current_health = max(1, player.current_health - 3)
-                starvation_msg = "⚠️ أنت تتضور جوعاً! صحتك تنخفض"
+                starvation_msg = "⚠️ أنت تتضور جوعاً!"
             
             self.session.commit()
             
-            result = {
+            return {
                 "area": area.name,
                 "emoji": area.emoji,
                 "explore_time": int(explore_time),
@@ -87,14 +77,11 @@ class GameMechanics:
                 "starvation": starvation_msg
             }
             
-            return result
-            
         except Exception as e:
             self.session.rollback()
             return {"error": f"حدث خطأ: {str(e)}"}
     
-    def fight_enemy(self, player: Player, enemy: Enemy) -> Dict:
-        """نظام قتال مبسط"""
+    def fight_enemy(self, player: Player, enemy) -> Dict:
         try:
             player_damage = self.calculate_player_damage(player)
             player_defense = self.calculate_player_defense(player)
@@ -107,7 +94,6 @@ class GameMechanics:
             for round_num in range(1, 6):
                 round_result = {"round": round_num}
                 
-                # دور اللاعب
                 player_attack = max(1, player_damage - random.randint(0, 2))
                 enemy_hp -= player_attack
                 round_result["player_attack"] = player_attack
@@ -117,7 +103,6 @@ class GameMechanics:
                     rounds.append(round_result)
                     break
                 
-                # دور العدو
                 enemy_attack = max(1, enemy.damage - player_defense // 3)
                 player_hp -= enemy_attack
                 round_result["enemy_attack"] = enemy_attack
@@ -127,13 +112,11 @@ class GameMechanics:
                 if player_hp <= 0:
                     break
                 
-                # فرصة هروب 20%
                 if random.random() < 0.2 and round_num >= 2:
                     escaped = True
                     round_result["escaped"] = True
                     break
             
-            # تحديث صحة اللاعب
             old_health = player.current_health
             player.current_health = max(1, player_hp)
             
@@ -167,10 +150,7 @@ class GameMechanics:
             return {"error": f"خطأ في القتال: {str(e)}"}
     
     def calculate_player_damage(self, player: Player) -> int:
-        """حساب ضرر اللاعب"""
         base_damage = 2
-        
-        # التحقق من السلاح المجهز
         equip = player.get_equipment()
         weapon = equip.get("weapon")
         
@@ -181,13 +161,10 @@ class GameMechanics:
             }
             base_damage += weapon_damages.get(weapon, 3)
         
-        # إضافة القوة
         base_damage += int(base_damage * player.strength * 0.02)
-        
         return base_damage
     
     def calculate_player_defense(self, player: Player) -> int:
-        """حساب دفاع اللاعب"""
         defense = 0
         equip = player.get_equipment()
         
@@ -203,58 +180,48 @@ class GameMechanics:
         
         return defense
     
-    def trigger_random_event(self, player: Player, area: Area) -> Dict:
-        """تفعيل حدث عشوائي"""
+    def trigger_random_event(self, player: Player, area) -> Dict:
         if not area.random_events:
-            return {"name": "لا حدث"}
+            return None
         
         event = random.choice(area.random_events)
         event_name = event["name"]
         
         if event_name == "عاصفة":
-            return {"name": event_name, "message": "🌧️ عاصفة! زاد وقت الاستكشاف 50%"}
-        
+            return {"name": event_name, "message": "🌧️ عاصفة! زاد وقت الاستكشاف"}
         elif event_name == "قوس قزح":
             gold_amount = random.randint(5, 15)
             player.add_item("gold_ingot", gold_amount)
-            return {"name": event_name, "message": f"🌈 قوس قزح! حصلت على {gold_amount} سبائك ذهب"}
-        
+            return {"name": event_name, "message": f"🌈 حصلت على {gold_amount} سبائك ذهب"}
         elif event_name == "زلزال":
             minerals = random.choice(["iron_ore", "gold_ore", "coal"])
             amount = random.randint(2, 5)
             player.add_item(minerals, amount)
-            return {"name": event_name, "message": f"🌍 زلزال! ظهر {amount} {minerals}"}
-        
+            return {"name": event_name, "message": f"🌍 ظهر {amount} {minerals}"}
         elif event_name == "قطيع ذئاب":
             damage = random.randint(3, 8)
             player.current_health = max(1, player.current_health - damage)
-            return {"name": event_name, "message": f"🐺 هجوم ذئاب! خسرت {damage} صحة"}
+            return {"name": event_name, "message": f"🐺 خسرت {damage} صحة"}
         
         return {"name": event_name, "message": "حدث غامض"}
     
     def eat_food(self, player: Player, food_name: str) -> Dict:
-        """تناول الطعام"""
         food_values = {
             "apple": 4, "bread": 5, "cooked_beef": 8, "tropical_fruit": 8,
             "honey": 6, "golden_apple": 4, "raw_beef": 2, "raw_chicken": 1,
-            "raw_pork": 2, "raw_mutton": 2, "milk": 3, "egg": 1,
-            "cookie": 2, "cake": 7, "bear_meat": 6
+            "raw_pork": 2, "raw_mutton": 2, "milk": 3, "egg": 1
         }
         
         if food_name not in food_values:
-            return {"error": "هذا الطعام غير معروف"}
+            return {"error": "طعام غير معروف"}
         
         if not player.has_item(food_name, 1):
             return {"error": "ليس لديك هذا الطعام"}
         
-        # استهلاك الطعام
         player.remove_item(food_name, 1)
-        
-        # زيادة الشبع
         food_value = food_values[food_name]
         player.current_hunger = min(player.max_hunger, player.current_hunger + food_value)
         
-        # تأثيرات خاصة
         effects = []
         if food_name == "golden_apple":
             player.current_health = min(player.max_health, player.current_health + 4)
@@ -262,7 +229,6 @@ class GameMechanics:
         elif food_name == "tropical_fruit":
             effects.append("🥭 شبع مضاعف!")
         
-        # الأطعمة النيئة قد تسبب تسمم
         if "raw" in food_name and random.random() < 0.3:
             effects_list = player.get_status_effects()
             effects_list.append({"name": "food_poisoning", "duration": 3})
@@ -279,17 +245,14 @@ class GameMechanics:
         }
     
     def sleep_in_village(self, player: Player) -> Dict:
-        """النوم في القرية"""
         if not player.can_sleep():
             time_diff = datetime.utcnow() - player.last_sleep
             hours_left = 12 - (time_diff.total_seconds() / 3600)
-            return {"error": f"لا يمكنك النوم الآن. انتظر {int(hours_left)} ساعات"}
+            return {"error": f"انتظر {int(hours_left)} ساعات"}
         
-        # استعادة الصحة والجوع
         player.current_health = player.max_health
         player.current_hunger = player.max_hunger
         
-        # إزالة التأثيرات السلبية
         effects = player.get_status_effects()
         effects = [e for e in effects if e.get("name") not in ["poison", "food_poisoning"]]
         player.set_status_effects(effects)
@@ -298,76 +261,43 @@ class GameMechanics:
         self.session.commit()
         
         return {
-            "message": "😴 نمت جيداً! تم استعادة صحتك وجوعك بالكامل",
+            "message": "😴 نمت جيداً!",
             "health": player.current_health,
             "hunger": player.current_hunger
         }
-
+    
     def explore_temple(self, player: Player) -> Dict:
-        """استكشاف المعبد"""
         if player.level < 10:
             return {"error": "تحتاج مستوى 10 لدخول المعبد"}
         
-        rooms = []
-        
-        rooms.append({
-            "room": 1,
-            "name": "غرفة الأبواب",
-            "description": "أمامك 3 أبواب، اختر الباب الصحيح (1-3)"
-        })
-        
-        ghost_questions = [
-            ("ما هو لون التفاح؟", "أحمر"),
-            ("كم عدد الأرجل للعنكبوت؟", "8"),
-            ("ما هو أقوى معدن؟", "ألماس")
+        rooms = [
+            {"room": 1, "name": "غرفة الأبواب", "description": "اختر الباب الصحيح (1-3)"},
+            {"room": 2, "name": "غرفة الأشباح", "question": "ما هو لون التفاح؟", "answer": "أحمر"},
+            {"room": 3, "name": "غرفة اللهب", "description": "اختر: (يمين/يسار/وسط)"},
+            {"room": 4, "name": "غرفة الفخاخ", "description": "اختر الزر الآمن (1-3)"},
+            {"room": 5, "name": "غرفة الكنز", "description": "اختر الصندوق الصحيح (1-3)"}
         ]
-        q, a = random.choice(ghost_questions)
-        rooms.append({
-            "room": 2,
-            "name": "غرفة الأشباح",
-            "question": q,
-            "answer": a
-        })
-        
-        rooms.append({
-            "room": 3,
-            "name": "غرفة اللهب",
-            "description": "النار تلاحقك! اختر: (يمين/يسار/وسط)"
-        })
-        
-        rooms.append({
-            "room": 4,
-            "name": "غرفة الفخاخ",
-            "description": "3 أزرار أمامك، واحد فقط آمن (1-3)"
-        })
-        
-        rooms.append({
-            "room": 5,
-            "name": "غرفة الكنز",
-            "description": "3 صناديق، واحد فقط فيه الجوهرة (1-3)"
-        })
         
         return {
             "temple": "المعبد الغامض",
             "rooms": rooms,
             "current_room": 1,
-            "message": "🏛️ دخلت المعبد! أمامك 5 غرف مليئة بالتحديات"
+            "message": "🏛️ دخلت المعبد!"
         }
     
     def solve_temple_puzzle(self, player: Player, room: int, answer: str) -> Dict:
-        """حل لغز المعبد"""
         if room == 1:
             correct = random.randint(1, 3)
             if str(answer) == str(correct):
-                return {"success": True, "message": "✅ الباب الصحيح! تقدم للغرفة التالية", "next_room": 2}
+                return {"success": True, "message": "✅ الباب الصحيح!", "next_room": 2}
             else:
                 player.current_health = max(1, player.current_health - 5)
                 self.session.commit()
-                return {"success": False, "message": "❌ باب خاطئ! خسرت 5 صحة"}
+                return {"success": False, "message": "❌ خسرت 5 صحة"}
         
         elif room == 2:
             if answer.strip() in ["أحمر", "8", "ألماس"]:
-                return {"success": True, "message": "✅ أجبت بشكل صحيح!", "next_room": 3}
+                return {"success": True, "message": "✅ إجابة صحيحة!", "next_room": 3}
             else:
                 player.current_health = max(1, player.current_health - 3)
                 self.session.commit()
@@ -376,11 +306,11 @@ class GameMechanics:
         elif room == 3:
             correct = random.choice(["يمين", "يسار", "وسط"])
             if answer == correct:
-                return {"success": True, "message": "✅ نجوت من النار!", "next_room": 4}
+                return {"success": True, "message": "✅ نجوت!", "next_room": 4}
             else:
                 player.current_health = max(1, player.current_health - 8)
                 self.session.commit()
-                return {"success": False, "message": "🔥 احترقت! خسرت 8 صحة"}
+                return {"success": False, "message": "🔥 خسرت 8 صحة"}
         
         elif room == 4:
             correct = random.randint(1, 3)
@@ -389,7 +319,7 @@ class GameMechanics:
             else:
                 player.current_health = max(1, player.current_health - 6)
                 self.session.commit()
-                return {"success": False, "message": "💥 فخ! خسرت 6 صحة"}
+                return {"success": False, "message": "💥 خسرت 6 صحة"}
         
         elif room == 5:
             correct = random.randint(1, 3)
@@ -414,10 +344,10 @@ class GameMechanics:
                 return {
                     "success": True,
                     "gem": gem,
-                    "message": f"🎉 رائع! حصلت على {gem}",
+                    "message": f"🎉 حصلت على {gem}!",
                     "temple_complete": True
                 }
             else:
-                return {"success": False, "message": "📦 صندوق فارغ! حاول مرة أخرى"}
+                return {"success": False, "message": "📦 صندوق فارغ!"}
         
         return {"error": "غرفة غير معروفة"}
