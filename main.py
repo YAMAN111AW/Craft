@@ -58,7 +58,7 @@ def main_menu_keyboard():
 @bot.message_handler(commands=['start'])
 def start_command(message):
     try:
-        user_id = str(message.from_user.id)
+        user_id = message.from_user.id
         username = message.from_user.username or message.from_user.first_name
         
         player, is_new = get_or_create_player(session, user_id, username)
