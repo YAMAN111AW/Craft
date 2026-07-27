@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, Boolean, Text
+from sqlalchemy import create_engine, Column, BigInteger, Integer, String, JSON, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
@@ -11,7 +11,7 @@ class Player(Base):
     __tablename__ = 'players'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer)
+    user_id = Column(BigInteger, unique=True, nullable=False)  # <-- BigInteger هنا الحل
     username = Column(String, default="Player")
     level = Column(Integer, default=1)
     xp = Column(Integer, default=0)
@@ -249,11 +249,12 @@ Session = sessionmaker(bind=engine)
 def get_or_create_player(session, user_id, username=None):
     """الحصول على لاعب أو إنشائه"""
     try:
-        player = session.query(Player).filter_by(user_id=int(user_id)).first()
+        # البحث بـ user_id (BigInteger)
+        player = session.query(Player).filter_by(user_id=user_id).first()
         
         if not player:
             player = Player(
-                user_id=int(user_id),
+                user_id=user_id,
                 username=username or f"Player_{user_id}"
             )
             session.add(player)
@@ -266,7 +267,7 @@ def get_or_create_player(session, user_id, username=None):
         session.rollback()
         print(f"خطأ: {e}")
         player = Player(
-            user_id=int(user_id),
+            user_id=user_id,
             username=username or f"Player_{user_id}"
         )
         session.add(player)
