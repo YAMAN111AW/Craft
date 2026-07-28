@@ -1,601 +1,238 @@
-import os
-import telebot
+import os, random, telebot
 from telebot import types
-from datetime import datetime
-import random
-from sqlalchemy import text
-from database import Player, WorldEvent, Session, engine, get_or_create_player
+from database import Session, get_player
 from game_mechanics import GameMechanics
-from world_data import WorldData
+from crafting_system import CraftingSystem
 
-# ====== إصلاح قاعدة البيانات تلقائياً ======
-def fix_database():
-    try:
-        with engine.connect() as conn:
-            columns_to_add = [
-                ("dragon_crystals", "INTEGER DEFAULT 6"),
-                ("dragon_sword_hits", "INTEGER DEFAULT 0"),
-                ("final_blows", "INTEGER DEFAULT 0"),
-            ]
-            
-            for col_name, col_type in columns_to_add:
-                try:
-                    conn.execute(text(
-                        f"ALTER TABLE players ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
-                    ))
-                    conn.commit()
-                    print(f"✅ عمود {col_name}")
-                except Exception as e:
-                    if "already exists" not in str(e).lower():
-                        print(f"⚠️ {col_name}: {e}")
-            
-            print("✅ قاعدة البيانات محدثة")
-    except Exception as e:
-        print(f"❌ خطأ: {e}")
-
-fix_database()
-
-# ====== تهيئة البوت ======
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 session = Session()
-game = GameMechanics(session)
-temple_sessions = {}
+gm = GameMechanics(session)
+temples = {}
 
-def main_menu_keyboard():
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    buttons = [
-        "🌳 استكشاف الغابة", "🕳️ استكشاف الكهف",
-        "🏘️ الذهاب للقرية", "🏛️ دخول المعبد",
-        "🔥 النذر", "🎒 مخزوني",
-        "🛠️ التصنيع", "🍖 أكل",
-        "❤️ حالتي", "📊 مهاراتي",
-        "ℹ️ مساعدة"
-    ]
-    markup.add(*[types.KeyboardButton(btn) for btn in buttons])
-    return markup
+def menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    kb.add("🌳 غابة","🕳️ كهف","🏘️ قرية","🏛️ معبد","🔥 نذر","🌌 إندر")
+    kb.add("🎒 مخزون","🛠️ تصنيع","🍖 أكل","❤️ حالتي","📊 مهاراتي")
+    return kb
+
+def find_food(player):
+    inv = player.get_inv()
+    foods = {}
+    food_list = ["apple","bread","cooked_beef","tropical_fruit","honey","golden_apple","milk","egg","raw_beef","raw_chicken"]
+    for s in inv.values():
+        if s and s.get("name") in food_list:
+            foods[s["name"]] = s["amount"]
+    return foods
 
 @bot.message_handler(commands=['start'])
-def start_command(message):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        username = message.from_user.username or message.from_user.first_name
-        
-        player, is_new = get_or_create_player(session, user_id, username)
-        
-        if is_new:
-            welcome_text = """
-🌟 *أهلاً بك في عالم ماينكرافت!*
+def start(msg):
+    p, new = get_player(session, msg.from_user.id, msg.from_user.first_name)
+    txt = "🌟 *أهلاً بك في عالم ماينكرافت!*" if new else f"👋 *مرحباً {p.username}!*\n⭐ مستوى {p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20"
+    bot.send_message(msg.chat.id, txt, parse_mode='Markdown', reply_markup=menu())
 
-🎮 *ابدأ رحلتك الآن:*
-• 🌳 استكشف الغابة للأخشاب والطعام
-• 🕳️ ادخل الكهوف للمعادن
-• 🏘️ زر القرية للتجارة والمهام
-• 🏛️ تحدى المعبد للألغاز
-• 🛠️ اصنع أدواتك وأسلحتك
-
-استخدم الأزرار أدناه للتنقل 👇
-            """
-        else:
-            welcome_text = f"""
-👋 *مرحباً بعودتك {player.username}!*
-
-📊 *حالتك:*
-⭐ المستوى: {player.level} | XP: {player.xp}/{player.level * 10}
-❤️ الصحة: {player.current_health}/{player.max_health}
-🍖 الجوع: {player.current_hunger}/{player.max_hunger}
-🗺️ المنطقة: {player.current_area}
-            """
-        
-        bot.send_message(
-            message.chat.id,
-            welcome_text,
-            parse_mode='Markdown',
-            reply_markup=main_menu_keyboard()
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ حدث خطأ: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "🌳 استكشاف الغابة")
-def explore_forest_cmd(message):
-    process_exploration(message, "forest")
-
-@bot.message_handler(func=lambda msg: msg.text == "🕳️ استكشاف الكهف")
-def explore_cave_cmd(message):
-    process_exploration(message, "cave")
-
-@bot.message_handler(func=lambda msg: msg.text == "🔥 النذر")
-def explore_nether_cmd(message):
-    process_exploration(message, "cave")
-
-def process_exploration(message, area_name):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        if not player:
-            bot.reply_to(message, "❌ حدث خطأ. جرب /start")
-            return
-        
-        wait_msg = bot.reply_to(message, f"🔍 جاري استكشاف {area_name}...")
-        
-        result = game.explore_area(player, area_name)
-        
-        if "error" in result:
-            bot.edit_message_text(
-                f"❌ {result['error']}",
-                message.chat.id,
-                wait_msg.message_id
-            )
-            return
-        
-        response = f"{result['emoji']} *استكشاف {result['area']}*\n\n"
-        response += f"⏱️ الوقت: {result['explore_time']} ثانية\n\n"
-        
-        if result['rewards']:
-            response += "🎁 *الموارد:*\n"
-            for reward in result['rewards']:
-                response += f"• {reward}\n"
-        
-        if result.get('enemy'):
-            enemy_data = result['enemy']
-            response += f"\n⚔️ *{enemy_data['enemy_emoji']} {enemy_data['enemy_name']}!*\n"
-            
-            if enemy_data.get('victory'):
-                response += "✅ انتصرت!\n"
-                if enemy_data.get('drops'):
-                    response += "📦 *الغنائم:*\n"
-                    for drop in enemy_data['drops']:
-                        response += f"• {drop}\n"
-                response += f"⭐ +{enemy_data['xp_reward']} XP\n"
-            else:
-                response += f"💔 خسرت {enemy_data.get('health_lost', 0)} صحة\n"
-        
-        if result.get('event'):
-            response += f"\n🎲 {result['event']['message']}\n"
-        
-        response += f"\n⭐ +{result['xp_gained']} XP"
-        response += f"\n🍖 الجوع: {result['current_hunger']}/20"
-        response += f"\n❤️ الصحة: {result['current_health']}/20"
-        
-        if result.get('starvation'):
-            response += f"\n\n{result['starvation']}"
-        
-        bot.edit_message_text(
-            response,
-            message.chat.id,
-            wait_msg.message_id,
-            parse_mode='Markdown'
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "🏘️ الذهاب للقرية")
-def village_menu(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("😴 النوم", callback_data="village_sleep"),
-        types.InlineKeyboardButton("📋 مهمة", callback_data="village_quest"),
-        types.InlineKeyboardButton("🛒 المتجر", callback_data="village_shop")
-    )
+@bot.message_handler(func=lambda m: m.text in ["🌳 غابة","🕳️ كهف","🔥 نذر","🌌 إندر"])
+def explore(msg):
+    area_map = {"🌳 غابة":"forest","🕳️ كهف":"cave","🔥 نذر":"nether","🌌 إندر":"end"}
+    p, _ = get_player(session, msg.from_user.id)
+    wait = bot.reply_to(msg, "🔍 استكشاف...")
+    res = gm.explore(p, area_map[msg.text])
+    if "error" in res:
+        bot.edit_message_text(f"❌ {res['error']}", msg.chat.id, wait.message_id)
+        return
     
-    bot.send_message(
-        message.chat.id,
-        "🏘️ *مرحباً بك في القرية!*",
-        parse_mode='Markdown',
-        reply_markup=markup
-    )
+    txt = f"{res['emoji']} *{res['area']}* | ⏱️ {res['time']}s\n\n🎁 *موارد:*\n"
+    txt += "\n".join(f"• {r}" for r in res['rewards'])
+    if res.get('enemy'):
+        e = res['enemy']
+        txt += f"\n\n⚔️ *{e['emoji']} {e['name']}* - {'✅ انتصرت' if e.get('win') else '💔 هُزمت'}"
+        if e.get('drops'): txt += "\n📦 " + ", ".join(e['drops'])
+    if res.get('event'): txt += f"\n\n🎲 {res['event']['msg']}"
+    txt += f"\n\n⭐ +{res['xp']}XP | 🍖 {res['hunger']}/20 | ❤️ {res['health']}/20"
+    if res.get('starve'): txt += f"\n{res['starve']}"
+    bot.edit_message_text(txt, msg.chat.id, wait.message_id, parse_mode='Markdown')
 
-@bot.message_handler(func=lambda msg: msg.text == "🏛️ دخول المعبد")
-def temple_start(message):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        result = game.explore_temple(player)
-        
-        if "error" in result:
-            bot.reply_to(message, f"❌ {result['error']}")
+@bot.message_handler(func=lambda m: m.text == "🏘️ قرية")
+def village(msg):
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(types.InlineKeyboardButton("😴 نوم", callback_data="v_sleep"),
+           types.InlineKeyboardButton("📋 مهمة", callback_data="v_quest"),
+           types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop"))
+    bot.send_message(msg.chat.id, "🏘️ *القرية*", parse_mode='Markdown', reply_markup=kb)
+
+@bot.message_handler(func=lambda m: m.text == "🏛️ معبد")
+def temple(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    res = gm.temple(p)
+    if "error" in res:
+        bot.reply_to(msg, f"❌ {res['error']}")
+        return
+    temples[msg.from_user.id] = 1
+    kb = types.InlineKeyboardMarkup(row_width=3)
+    kb.add(*[types.InlineKeyboardButton(str(i), callback_data=f"tm_1_{i}") for i in range(1,4)])
+    bot.send_message(msg.chat.id, f"🏛️ *الغرفة 1: الأبواب*\nاختر باب (1-3)", parse_mode='Markdown', reply_markup=kb)
+
+@bot.message_handler(func=lambda m: m.text == "🎒 مخزون")
+def inv(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    inv = p.get_inv()
+    items = [(i, s) for i, s in enumerate(inv.values()) if s]
+    if not items:
+        return bot.reply_to(msg, "📭 فارغ")
+    # Pagination - show first 18
+    txt = "🎒 *مخزونك:*\n\n"
+    for idx, slot in items[:18]:
+        txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
+    bot.send_message(msg.chat.id, txt, parse_mode='Markdown')
+
+@bot.message_handler(func=lambda m: m.text == "🛠️ تصنيع")
+def craft_menu(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    recipes = CraftingSystem.get_recipes(p)
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for i, r in enumerate(recipes[:20]):
+        kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"craft_{i}"))
+    bot.send_message(msg.chat.id, "🛠️ *التصنيع*", parse_mode='Markdown', reply_markup=kb)
+
+@bot.message_handler(func=lambda m: m.text == "🍖 أكل")
+def eat_menu(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    foods = find_food(p)
+    if not foods:
+        return bot.reply_to(msg, "🍖 لا طعام")
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for f, amt in foods.items():
+        kb.add(types.InlineKeyboardButton(f"{f} x{amt}", callback_data=f"eat_{f}"))
+    bot.send_message(msg.chat.id, "🍖 *اختر الطعام*", parse_mode='Markdown', reply_markup=kb)
+
+@bot.message_handler(func=lambda m: m.text == "❤️ حالتي")
+def status(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    titles = p.titles if isinstance(p.titles, list) else []
+    txt = f"👤 {p.username} | ⭐ Lv.{p.level}\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🏅 {', '.join(titles) if titles else 'لا ألقاب'}"
+    bot.send_message(msg.chat.id, txt)
+
+@bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
+def skills(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    txt = f"⚔️ قوة: {p.strength} | 💨 سرعة: {p.speed}\n💪 تحمل: {p.endurance} | 🍀 حظ: {p.luck}\n🎯 نقاط: {p.skill_points}"
+    if p.skill_points > 0:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(types.InlineKeyboardButton("⚔️", callback_data="sk_strength"),
+               types.InlineKeyboardButton("💨", callback_data="sk_speed"),
+               types.InlineKeyboardButton("💪", callback_data="sk_endurance"),
+               types.InlineKeyboardButton("🍀", callback_data="sk_luck"))
+        bot.send_message(msg.chat.id, txt, reply_markup=kb)
+    else:
+        bot.send_message(msg.chat.id, txt)
+
+@bot.callback_query_handler(func=lambda c: True)
+def callback(call):
+    p, _ = get_player(session, call.from_user.id)
+    data = call.data
+    
+    if data.startswith("tm_"):
+        _, room, ans = data.split("_")
+        res = gm.solve_temple(p, int(room), ans)
+        if res.get("gem"):
+            bot.edit_message_text(res['msg'], call.message.chat.id, call.message.message_id)
             return
-        
-        temple_sessions[user_id] = {
-            "current_room": 1,
-            "rooms": result['rooms']
-        }
-        
-        response = f"🏛️ *المعبد*\n\n{result['message']}\n\n"
-        response += f"*الغرفة 1:* {result['rooms'][0]['name']}\n"
-        response += result['rooms'][0]['description']
-        
-        markup = types.InlineKeyboardMarkup(row_width=3)
-        for i in range(1, 4):
-            markup.add(types.InlineKeyboardButton(f"🚪 {i}", callback_data=f"temple_1_{i}"))
-        
-        bot.send_message(
-            message.chat.id,
-            response,
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "🎒 مخزوني")
-def show_inventory(message):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        inv = player.get_inventory()
-        
-        response = "🎒 *مخزونك:*\n\n"
-        items_found = False
-        
-        for i in range(36):
-            slot_key = f"slot_{i}"
-            item = inv.get(slot_key)
-            if item and item.get("name"):
-                items_found = True
-                response += f"{i+1}. {item['name']} x{item['amount']}\n"
-        
-        if not items_found:
-            response += "📭 المخزون فارغ\n"
-        
-        equip = player.get_equipment()
-        response += "\n🎽 *المعدات:*\n"
-        for slot, item in equip.items():
-            response += f"• {slot}: {item if item else 'فارغ'}\n"
-        
-        bot.send_message(message.chat.id, response, parse_mode='Markdown')
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "🍖 أكل")
-def eat_menu(message):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        inv = player.get_inventory()
-        foods = {}
-        food_emojis = {
-            "apple": "🍎", "bread": "🍞", "cooked_beef": "🥩",
-            "tropical_fruit": "🥭", "honey": "🍯", "milk": "🥛", "egg": "🥚"
-        }
-        
-        for slot_data in inv.values():
-            if slot_data and slot_data.get("name") in food_emojis:
-                name = slot_data["name"]
-                foods[name] = slot_data["amount"]
-        
-        if not foods:
-            bot.reply_to(message, "🍖 ليس لديك طعام!")
+        if res.get("error"):
+            bot.answer_callback_query(call.id, res.get('msg','خطأ'))
             return
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        for food, amount in foods.items():
-            emoji = food_emojis.get(food, "🍖")
-            markup.add(types.InlineKeyboardButton(
-                f"{emoji} {food} (x{amount})",
-                callback_data=f"eat_{food}"
-            ))
-        
-        bot.send_message(
-            message.chat.id,
-            f"🍖 *اختر الطعام:*\n\nالجوع: {player.current_hunger}/20",
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "❤️ حالتي")
-def show_status(message):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        health_bar = "█" * player.current_health + "░" * (player.max_health - player.current_health)
-        hunger_bar = "█" * player.current_hunger + "░" * (player.max_hunger - player.current_hunger)
-        
-        titles = player.get_titles()
-        
-        response = f"""
-❤️ *حالة اللاعب*
-
-👤 *{player.username}*
-⭐ *المستوى:* {player.level} ({player.xp}/{player.level * 10} XP)
-🏅 *الألقاب:* {', '.join(titles) if titles else 'لا يوجد'}
-
-❤️ *الصحة:* {health_bar} {player.current_health}/{player.max_health}
-🍖 *الجوع:* {hunger_bar} {player.current_hunger}/{player.max_hunger}
-
-🗺️ *المنطقة:* {player.current_area}
-⚔️ *الضرر:* {game.calculate_player_damage(player)}
-🛡️ *الدفاع:* {game.calculate_player_defense(player)}
-        """
-        
-        bot.send_message(message.chat.id, response, parse_mode='Markdown')
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "📊 مهاراتي")
-def show_skills(message):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        response = f"""
-📊 *مهاراتك*
-
-🎯 *نقاط المهارة:* {player.skill_points}
-
-⚔️ *القوة:* {player.strength}/100 (+{int(player.strength * 2)}% ضرر)
-💨 *السرعة:* {player.speed}/100 (-{int(player.speed * 5)}% وقت)
-💪 *التحمّل:* {player.endurance}/100 (+{player.endurance * 2} صحة)
-🍀 *الحظ:* {player.luck}/100 (+{int(player.luck * 3)}% موارد)
-
-🔓 *الوصفات:* {len(player.get_recipes())} مستوى
-        """
-        
-        if player.skill_points > 0:
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            markup.add(
-                types.InlineKeyboardButton("⚔️ قوة", callback_data="skill_strength"),
-                types.InlineKeyboardButton("💨 سرعة", callback_data="skill_speed"),
-                types.InlineKeyboardButton("💪 تحمّل", callback_data="skill_endurance"),
-                types.InlineKeyboardButton("🍀 حظ", callback_data="skill_luck")
-            )
-            response += "\nاختر مهارة لتطويرها:"
-            bot.send_message(message.chat.id, response, parse_mode='Markdown', reply_markup=markup)
+        if not res.get("win"):
+            bot.answer_callback_query(call.id, res['msg'])
+            return
+        if res.get("next"):
+            nr = res['next']
+            rooms = ["الأبواب","الأشباح","اللهب","الفخاخ","الكنز"]
+            if nr > 5:
+                bot.edit_message_text("🎉 نجوت من كل الغرف!", call.message.chat.id, call.message.message_id)
+                return
+            kb = types.InlineKeyboardMarkup(row_width=3)
+            if nr == 2:
+                kb.add(*[types.InlineKeyboardButton(a, callback_data=f"tm_2_{a}") for a in ["7","6","8"]])
+            elif nr == 3:
+                kb.add(*[types.InlineKeyboardButton(a, callback_data=f"tm_3_{a}") for a in ["يمين","يسار","وسط"]])
+            else:
+                kb.add(*[types.InlineKeyboardButton(str(i), callback_data=f"tm_{nr}_{i}") for i in range(1,4)])
+            bot.edit_message_text(f"🏛️ *الغرفة {nr}: {rooms[nr-1]}*", call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=kb)
+    
+    elif data.startswith("craft_"):
+        idx = int(data.split("_")[1])
+        recipes = CraftingSystem.get_recipes(p)
+        if idx < len(recipes):
+            r = recipes[idx]
+            ok, msg = CraftingSystem.craft(p, r)
+            session.commit()
+            bot.answer_callback_query(call.id, msg)
+    
+    elif data.startswith("eat_"):
+        food = data[4:]
+        res = gm.eat(p, food)
+        if "error" in res:
+            bot.answer_callback_query(call.id, res['error'])
         else:
-            bot.send_message(message.chat.id, response, parse_mode='Markdown')
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "ℹ️ مساعدة")
-def help_cmd(message):
-    help_text = """
-🎮 *أوامر البوت:*
-
-/start - بدء اللعبة
-/buy - الشراء من المتجر
-
-*الأزرار الرئيسية:*
-🌳 استكشاف الغابة
-🕳️ استكشاف الكهف
-🏘️ الذهاب للقرية
-🏛️ دخول المعبد
-🎒 مخزوني
-🛠️ التصنيع
-🍖 أكل
-❤️ حالتي
-📊 مهاراتي
-
-*نصائح:*
-• ابدأ بجمع الخشب من الغابة
-• اصنع أدوات في التصنيع
-• نم في القرية لاستعادة الصحة
-    """
-    bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+            txt = f"🍖 {food} | +{res['hunger']} شبع | {res['current']}/20"
+            if res.get('effects'): txt += "\n" + "\n".join(res['effects'])
+            bot.edit_message_text(txt, call.message.chat.id, call.message.message_id)
+    
+    elif data.startswith("sk_"):
+        sk = data[3:]
+        if p.skill_points > 0:
+            setattr(p, sk, min(100, getattr(p, sk)+1))
+            if sk == "endurance":
+                p.max_health += 2
+                p.current_health += 2
+            p.skill_points -= 1
+            session.commit()
+            bot.answer_callback_query(call.id, f"✅ {sk} +1")
+            skills(call.message)
+    
+    elif data == "v_sleep":
+        res = gm.sleep(p)
+        if "error" in res:
+            bot.answer_callback_query(call.id, res['error'])
+        else:
+            bot.edit_message_text(f"😴 {res['msg']}\n❤️ {res['hp']} | 🍖 {res['hunger']}", call.message.chat.id, call.message.message_id)
+    
+    elif data == "v_quest":
+        quests = [
+            ("الفلاح العطشان", "milk", 1, "bread", 3),
+            ("الحداد", "iron_ore", 3, "iron_sword", 1),
+        ]
+        q = random.choice(quests)
+        if p.has_item(q[1], q[2]):
+            p.remove_item(q[1], q[2])
+            p.add_item(q[3], q[4])
+            session.commit()
+            bot.answer_callback_query(call.id, f"✅ {q[0]}! +{q[3]}")
+        else:
+            bot.answer_callback_query(call.id, f"❌ {q[0]}: تحتاج {q[2]} {q[1]}")
+    
+    elif data == "v_shop":
+        txt = "🛒 *متجر*\n/buy تفاح = 2 خشب\n/buy لحم = 1 حديد"
+        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
 
 @bot.message_handler(commands=['buy'])
-def buy_item(message):
-    try:
-        user_id = message.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        args = message.text.split()
-        if len(args) < 2:
-            bot.reply_to(message, "استخدم: /buy [السلعة]")
-            return
-        
-        item = args[1]
-        shop = {
-            "تفاح": {"price_item": "oak_wood", "price": 2, "give": "apple", "amount": 3},
-            "لحم": {"price_item": "iron_ore", "price": 1, "give": "cooked_beef", "amount": 1},
-        }
-        
-        if item not in shop:
-            bot.reply_to(message, "❌ سلعة غير متوفرة")
-            return
-        
-        data = shop[item]
-        if not player.has_item(data["price_item"], data["price"]):
-            bot.reply_to(message, f"❌ تحتاج {data['price']} {data['price_item']}")
-            return
-        
-        player.remove_item(data["price_item"], data["price"])
-        player.add_item(data["give"], data["amount"])
+def buy(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.reply_to(msg, "/buy تفاح او /buy لحم")
+    shop = {"تفاح":{"price":"oak_wood","amt":2,"give":"apple","gamt":3},
+            "لحم":{"price":"iron_ore","amt":1,"give":"cooked_beef","gamt":1}}
+    item = args[1]
+    if item not in shop:
+        return bot.reply_to(msg, "❌ غير متوفر")
+    s = shop[item]
+    if p.has_item(s["price"], s["amt"]):
+        p.remove_item(s["price"], s["amt"])
+        p.add_item(s["give"], s["gamt"])
         session.commit()
-        bot.reply_to(message, f"✅ تم شراء {item}!")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {str(e)}")
+        bot.reply_to(msg, f"✅ اشتريت {item}!")
+    else:
+        bot.reply_to(msg, f"❌ تحتاج {s['amt']} {s['price']}")
 
-# ====== معالجة الأزرار ======
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callback(call):
-    try:
-        user_id = call.from_user.id  # ✅ بدون str()
-        player, _ = get_or_create_player(session, user_id)
-        
-        if not player:
-            bot.answer_callback_query(call.id, "❌ حدث خطأ")
-            return
-        
-        data = call.data
-        
-        if data.startswith("temple_"):
-            parts = data.split("_")
-            room = int(parts[1])
-            answer = parts[2]
-            
-            result = game.solve_temple_puzzle(player, room, answer)
-            
-            if result.get("temple_complete"):
-                bot.edit_message_text(
-                    f"🎉 *المعبد مكتمل!*\n\n{result['message']}",
-                    call.message.chat.id,
-                    call.message.message_id,
-                    parse_mode='Markdown'
-                )
-                if user_id in temple_sessions:
-                    del temple_sessions[user_id]
-            
-            elif result.get("next_room"):
-                temple_data = temple_sessions.get(user_id, {})
-                next_room = result["next_room"]
-                
-                if next_room <= 5 and temple_data:
-                    room_data = temple_data['rooms'][next_room - 1]
-                    response = f"🏛️ *الغرفة {next_room}:* {room_data['name']}\n\n"
-                    
-                    if next_room == 2:
-                        response += f"سؤال: {room_data['question']}"
-                        markup = types.InlineKeyboardMarkup()
-                        markup.add(
-                            types.InlineKeyboardButton("أحمر", callback_data="temple_2_أحمر"),
-                            types.InlineKeyboardButton("8", callback_data="temple_2_8"),
-                            types.InlineKeyboardButton("ألماس", callback_data="temple_2_ألماس")
-                        )
-                    elif next_room == 3:
-                        response += room_data['description']
-                        markup = types.InlineKeyboardMarkup(row_width=3)
-                        markup.add(
-                            types.InlineKeyboardButton("👈 يسار", callback_data="temple_3_يسار"),
-                            types.InlineKeyboardButton("👆 وسط", callback_data="temple_3_وسط"),
-                            types.InlineKeyboardButton("👉 يمين", callback_data="temple_3_يمين")
-                        )
-                    else:
-                        response += room_data['description']
-                        markup = types.InlineKeyboardMarkup(row_width=3)
-                        for i in range(1, 4):
-                            markup.add(types.InlineKeyboardButton(
-                                f"اختيار {i}",
-                                callback_data=f"temple_{next_room}_{i}"
-                            ))
-                    
-                    bot.edit_message_text(
-                        response,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        parse_mode='Markdown',
-                        reply_markup=markup
-                    )
-            else:
-                bot.answer_callback_query(call.id, result.get('message', ''))
-        
-        elif data.startswith("eat_"):
-            food = data.replace("eat_", "")
-            result = game.eat_food(player, food)
-            
-            if "error" in result:
-                bot.answer_callback_query(call.id, result['error'])
-            else:
-                response = f"🍖 أكلت {food}!\n"
-                response += f"🍖 شبع: +{result['hunger_restored']}\n"
-                response += f"المستوى: {result['current_hunger']}/20\n"
-                
-                if result.get('effects'):
-                    response += "\n" + "\n".join(result['effects'])
-                
-                bot.edit_message_text(
-                    response,
-                    call.message.chat.id,
-                    call.message.message_id,
-                    parse_mode='Markdown'
-                )
-        
-        elif data.startswith("skill_"):
-            skill = data.replace("skill_", "")
-            if player.skill_points > 0:
-                if skill == "strength":
-                    player.strength = min(100, player.strength + 1)
-                elif skill == "speed":
-                    player.speed = min(100, player.speed + 1)
-                elif skill == "endurance":
-                    player.endurance = min(100, player.endurance + 1)
-                    player.max_health += 2
-                    player.current_health = min(player.max_health, player.current_health + 2)
-                elif skill == "luck":
-                    player.luck = min(100, player.luck + 1)
-                
-                player.skill_points -= 1
-                session.commit()
-                bot.answer_callback_query(call.id, f"✅ تمت ترقية {skill}!")
-                show_skills(call.message)
-            else:
-                bot.answer_callback_query(call.id, "❌ لا تملك نقاط مهارة")
-        
-        elif data == "village_sleep":
-            result = game.sleep_in_village(player)
-            if "error" in result:
-                bot.answer_callback_query(call.id, result['error'])
-            else:
-                bot.edit_message_text(
-                    f"😴 {result['message']}\n\n❤️ الصحة: {result['health']}/20\n🍖 الجوع: {result['hunger']}/20",
-                    call.message.chat.id,
-                    call.message.message_id,
-                    parse_mode='Markdown'
-                )
-        
-        elif data == "village_quest":
-            quests = [
-                {"name": "الفلاح العطشان", "desc": "أحضر حليباً", "reward": "خبز x3", "need": "milk"},
-                {"name": "الحداد المحتاج", "desc": "أحضر 3 حديد", "reward": "سيف حديدي", "need": "iron_ore"}
-            ]
-            quest = random.choice(quests)
-            
-            if quest['need'] and player.has_item(quest['need'], 1 if quest['need'] == 'milk' else 3):
-                player.remove_item(quest['need'], 1 if quest['need'] == 'milk' else 3)
-                reward_name = quest['reward'].split()[0]
-                reward_amount = int(quest['reward'].split('x')[1]) if 'x' in quest['reward'] else 1
-                player.add_item(reward_name, reward_amount)
-                session.commit()
-                bot.edit_message_text(
-                    f"✅ *أكملت المهمة!*\n\nالمكافأة: {quest['reward']}",
-                    call.message.chat.id,
-                    call.message.message_id,
-                    parse_mode='Markdown'
-                )
-            else:
-                bot.edit_message_text(
-                    f"📋 *المهمة:* {quest['name']}\n{quest['desc']}\n💰 المكافأة: {quest['reward']}\n\n❌ لا تملك المتطلبات!",
-                    call.message.chat.id,
-                    call.message.message_id,
-                    parse_mode='Markdown'
-                )
-        
-        elif data == "village_shop":
-            shop_text = """
-🛒 *متجر القرية*
-
-• 🍎 تفاح: 2 خشب بلوط
-• 🥩 لحم مطبوخ: 1 حديد خام
-
-/buy تفاح
-/buy لحم
-            """
-            bot.edit_message_text(
-                shop_text,
-                call.message.chat.id,
-                call.message.message_id,
-                parse_mode='Markdown'
-            )
-        
-    except Exception as e:
-        bot.answer_callback_query(call.id, f"❌ خطأ: {str(e)}")
-        print(f"خطأ في callback: {e}")
-
-# ====== تشغيل البوت ======
-if __name__ == "__main__":
-    print("🤖 بوت ماينكرافت يعمل...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+print("🤖 البوت يعمل...")
+bot.infinity_polling()
