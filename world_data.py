@@ -1,7 +1,6 @@
-# بيانات المناطق والموارد والأعداء المتوازنة
 import random
-from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import List, Dict, Tuple, Optional
 
 @dataclass
 class Resource:
@@ -9,8 +8,7 @@ class Resource:
     emoji: str
     min_amount: int
     max_amount: int
-    rarity: float  # 0-1, كلما قل الرقم كان أندر
-    category: str  # wood, stone, food, rare, etc.
+    weight: int  # higher = more common
 
 @dataclass
 class Enemy:
@@ -18,164 +16,146 @@ class Enemy:
     emoji: str
     health: int
     damage: int
-    xp_reward: int
-    drops: List[Tuple[str, int, float]]  # (item, amount, probability)
-    special_ability: Optional[str] = None
+    xp: int
+    drops: List[Tuple[str, int, float]]  # name, amount, probability 0-1
+    special: Optional[str] = None
 
 @dataclass
 class Area:
     name: str
     emoji: str
-    description: str
+    level_req: int
+    explore_time: int  # seconds base
     resources: List[Resource]
     enemies: List[Enemy]
-    level_required: int
-    exploration_time: int  # بالثواني
-    random_events: List[Dict]
-    
+    events: List[Dict]
+    sub_locations: List[str] = field(default_factory=list)
+
 class WorldData:
-    # تعريف جميع الموارد
-    RESOURCES = {
-        # الغابة
-        "oak_wood": Resource("خشب بلوط", "🪵", 3, 6, 0.8, "wood"),
-        "spruce_wood": Resource("خشب تنوب", "🪵", 3, 6, 0.7, "wood"),
-        "birch_wood": Resource("خشب بتولا", "🪵", 3, 6, 0.6, "wood"),
-        "jungle_wood": Resource("خشب استوائي", "🪵", 3, 6, 0.5, "wood"),
-        "crimson_wood": Resource("خشب ناري", "🔥", 2, 4, 0.3, "wood"),
-        "apple": Resource("تفاح", "🍎", 1, 2, 0.3, "food"),
-        "mushroom": Resource("فطر", "🍄", 1, 2, 0.4, "food"),
-        "sap": Resource("عصارة", "💧", 1, 2, 0.35, "material"),
-        "tropical_fruit": Resource("فاكهة استوائية", "🥭", 1, 1, 0.25, "food"),
-        "fiery_coal": Resource("فحم ناري", "🔥", 1, 2, 0.2, "material"),
-        
-        # حيوانات الغابة
-        "leather": Resource("جلد", "🟤", 1, 3, 0.7, "material"),
-        "raw_beef": Resource("لحم بقر ني", "🥩", 2, 4, 0.6, "food"),
-        "milk": Resource("حليب", "🥛", 1, 1, 0.4, "food"),
-        "raw_pork": Resource("لحم خنزير ني", "🥩", 2, 3, 0.6, "food"),
-        "bone": Resource("عظم", "🦴", 1, 3, 0.5, "material"),
-        "raw_chicken": Resource("لحم دجاج ني", "🍗", 1, 2, 0.7, "food"),
-        "feather": Resource("ريش", "🪶", 1, 3, 0.5, "material"),
-        "egg": Resource("بيض", "🥚", 1, 2, 0.4, "food"),
-        "wool": Resource("صوف", "🧶", 1, 3, 0.6, "material"),
-        "raw_mutton": Resource("لحم ضأن ني", "🥩", 2, 3, 0.5, "food"),
-        "saddle": Resource("سرج", "🐴", 1, 1, 0.1, "rare"),
-        "hoof": Resource("حافر", "🦶", 1, 2, 0.15, "material"),
-        "bear_meat": Resource("لحم دب", "🥩", 3, 5, 0.3, "food"),
-        "bear_pelt": Resource("جلد دب", "🟤", 1, 2, 0.3, "rare"),
-        
-        # زهور وفطر
-        "flower_red": Resource("زهرة حمراء", "🌹", 1, 2, 0.6, "material"),
-        "flower_blue": Resource("زهرة زرقاء", "🌸", 1, 2, 0.5, "material"),
-        "poisonous_mushroom": Resource("فطر سام", "☠️", 1, 1, 0.3, "material"),
-        "honey": Resource("عسل", "🍯", 1, 2, 0.25, "food"),
-        "spider_silk": Resource("خيط عنكبوت", "🕸️", 1, 3, 0.4, "material"),
-        
-        # الكهف
-        "stone": Resource("حجر خام", "🪨", 3, 6, 0.9, "stone"),
-        "limestone": Resource("حجر جيري", "🪨", 2, 5, 0.7, "stone"),
-        "sandstone": Resource("حجر رملي", "🏜️", 2, 5, 0.7, "stone"),
-        "coal": Resource("فحم", "🖤", 1, 3, 0.6, "mineral"),
-        "iron_ore": Resource("حديد خام", "⛏️", 1, 2, 0.4, "mineral"),
-        "gold_ore": Resource("ذهب خام", "✨", 1, 2, 0.2, "mineral"),
-        "diamond": Resource("ألماس", "💎", 1, 1, 0.05, "rare"),
-        "emerald": Resource("زمرد", "💚", 1, 1, 0.08, "rare"),
-        "netherrack": Resource("حجر الهاوية", "🟥", 2, 4, 0.5, "special"),
-        "quartz": Resource("كوارتز", "⬜", 1, 2, 0.3, "mineral"),
-    }
-    
-    # تعريف جميع الأعداء
-    ENEMIES = {
-        "zombie": Enemy("زومبي", "🧟", 10, 3, 5, 
-                       [("rotten_flesh", 1, 0.6), ("iron_ingot", 1, 0.1)]),
-        "baby_zombie": Enemy("زومبي طفل", "🧒", 5, 2, 8, 
-                            [("rotten_flesh", 1, 0.5)], "fast"),
-        "skeleton": Enemy("سكلتون", "💀", 12, 4, 7, 
-                         [("bone", 2, 0.7), ("arrow", 2, 0.5)]),
-        "creeper": Enemy("كريبر", "💚", 15, 20, 10, 
-                        [("gunpowder", 2, 0.8)], "explode"),
-        "spider": Enemy("عنكبوت", "🕷️", 8, 2, 5, 
-                       [("spider_silk", 2, 0.6), ("spider_eye", 1, 0.3)]),
-        "blaze": Enemy("بليز", "🔥", 20, 6, 15, 
-                      [("blaze_rod", 1, 0.5)], "fire_burst"),
-        "ghast": Enemy("غاست", "👻", 15, 8, 12, 
-                      [("ghast_tear", 1, 0.4)], "flying"),
-        "enderman": Enemy("إندرمان", "⬛", 20, 7, 15, 
-                         [("ender_pearl", 1, 0.4)], "teleport"),
-        "ender_dragon": Enemy("تنين الإندر", "🐉", 100, 15, 100, 
-                             [("dragon_egg", 1, 1.0)], "boss"),
-    }
-    
-    AREAS = {
-        "forest": Area(
-            name="الغابة",
-            emoji="🌳",
-            description="غابة كثيفة مليئة بالأشجار والحيوانات",
-            level_required=1,
-            exploration_time=30,
-            resources=[
-                RESOURCES["oak_wood"], RESOURCES["spruce_wood"],
-                RESOURCES["apple"], RESOURCES["mushroom"],
-                RESOURCES["leather"], RESOURCES["raw_beef"],
-                RESOURCES["feather"], RESOURCES["wool"],
-                RESOURCES["honey"], RESOURCES["spider_silk"]
-            ],
-            enemies=[
-                ENEMIES["zombie"], ENEMIES["skeleton"],
-                ENEMIES["creeper"], ENEMIES["spider"]
-            ],
-            random_events=[
-                {"name": "عاصفة", "effect": "slow_explore", "probability": 0.15},
-                {"name": "نار غابة", "effect": "reduce_resources", "probability": 0.1},
-                {"name": "قوس قزح", "effect": "gold_bonus", "probability": 0.05},
-                {"name": "زلزال", "effect": "reveal_minerals", "probability": 0.08},
-                {"name": "قطيع ذئاب", "effect": "wolf_attack", "probability": 0.07}
-            ]
-        ),
-        "cave": Area(
-            name="الكهف",
-            emoji="🕳️",
-            description="كهف مظلم مليء بالمعادن والأخطار",
-            level_required=5,
-            exploration_time=45,
-            resources=[
-                RESOURCES["stone"], RESOURCES["coal"],
-                RESOURCES["iron_ore"], RESOURCES["gold_ore"],
-                RESOURCES["diamond"], RESOURCES["emerald"],
-                RESOURCES["quartz"]
-            ],
-            enemies=[
-                ENEMIES["zombie"], ENEMIES["skeleton"],
-                ENEMIES["spider"], ENEMIES["creeper"]
-            ],
-            random_events=[
-                {"name": "صندوق خشبي", "effect": "treasure_basic", "probability": 0.2},
-                {"name": "صندوق حديدي", "effect": "treasure_medium", "probability": 0.1},
-                {"name": "صندوق منحوت", "effect": "treasure_rare", "probability": 0.05},
-                {"name": "صندوق سحري", "effect": "treasure_legendary", "probability": 0.02}
-            ]
-        )
-    }
+    @staticmethod
+    def get_all_areas():
+        return {
+            "forest": Area(
+                name="الغابة", emoji="🌳", level_req=1, explore_time=30,
+                sub_locations=["أشجار", "مرعى الحيوانات", "خلايا النحل", "بركة"],
+                resources=[
+                    Resource("oak_wood", "🪵", 3, 6, 30),
+                    Resource("spruce_wood", "🪵", 3, 6, 25),
+                    Resource("birch_wood", "🪵", 3, 6, 20),
+                    Resource("jungle_wood", "🪵", 3, 6, 15),
+                    Resource("apple", "🍎", 1, 2, 15),
+                    Resource("mushroom", "🍄", 1, 2, 20),
+                    Resource("sap", "💧", 1, 2, 15),
+                    Resource("tropical_fruit", "🥭", 1, 1, 10),
+                    Resource("leather", "🟤", 1, 3, 20),
+                    Resource("raw_beef", "🥩", 2, 4, 18),
+                    Resource("milk", "🥛", 1, 1, 12),
+                    Resource("raw_pork", "🥩", 2, 3, 15),
+                    Resource("bone", "🦴", 1, 3, 15),
+                    Resource("raw_chicken", "🍗", 1, 2, 20),
+                    Resource("feather", "🪶", 1, 3, 15),
+                    Resource("egg", "🥚", 1, 2, 14),
+                    Resource("wool", "🧶", 1, 3, 18),
+                    Resource("raw_mutton", "🥩", 2, 3, 14),
+                    Resource("saddle", "🐴", 1, 1, 3),
+                    Resource("hoof", "🦶", 1, 2, 5),
+                    Resource("bear_meat", "🥩", 3, 5, 5),
+                    Resource("bear_pelt", "🟤", 1, 2, 5),
+                    Resource("honey", "🍯", 1, 2, 10),
+                    Resource("spider_silk", "🕸️", 1, 3, 12),
+                ],
+                enemies=[
+                    Enemy("ذئب", "🐺", 8, 3, 5, [("bone",2,0.5)], "tameable"),
+                    Enemy("دب", "🐻", 20, 7, 15, [("bear_meat",2,0.8),("bear_pelt",1,0.4)]),
+                ],
+                events=[
+                    {"name":"عاصفة","msg":"🌧️ عاصفة! زاد وقت الاستكشاف","eff":"slow"},
+                    {"name":"قوس قزح","msg":"🌈 قوس قزح! ذهب إضافي","eff":"gold"},
+                    {"name":"قطيع ذئاب","msg":"🐺 قطيع ذئاب يهاجمك!","eff":"wolf_attack"},
+                    {"name":"زلزال","msg":"🌍 زلزال! معادن مكشوفة","eff":"minerals"},
+                ]
+            ),
+            "cave": Area(
+                name="الكهف", emoji="🕳️", level_req=5, explore_time=45,
+                sub_locations=["منجم", "نفق مظلم", "بحيرة جوفية", "غرفة الكنوز"],
+                resources=[
+                    Resource("stone", "🪨", 3, 6, 35),
+                    Resource("limestone", "🪨", 2, 5, 25),
+                    Resource("sandstone", "🏜️", 2, 5, 25),
+                    Resource("coal", "🖤", 1, 3, 25),
+                    Resource("iron_ore", "⛏️", 1, 2, 18),
+                    Resource("gold_ore", "✨", 1, 2, 8),
+                    Resource("diamond", "💎", 1, 1, 2),
+                    Resource("emerald", "💚", 1, 1, 3),
+                    Resource("quartz", "⬜", 1, 2, 10),
+                ],
+                enemies=[
+                    Enemy("زومبي", "🧟", 10, 3, 8, [("rotten_flesh",1,0.5)]),
+                    Enemy("سكلتون", "💀", 12, 4, 10, [("bone",2,0.6),("arrow",2,0.4)]),
+                    Enemy("كريبر", "💚", 15, 8, 15, [("gunpowder",2,0.7)], "explode"),
+                    Enemy("عنكبوت", "🕷️", 8, 2, 6, [("spider_silk",2,0.5),("spider_eye",1,0.3)]),
+                    Enemy("سيلفر فيش", "🪲", 4, 1, 3, [], "steal"),
+                ],
+                events=[
+                    {"name":"صندوق خشبي","msg":"📦 وجدت صندوقاً خشبياً!","eff":"chest_basic"},
+                    {"name":"صندوق حديدي","msg":"📦 صندوق حديدي!","eff":"chest_iron"},
+                    {"name":"صندوق منحوت","msg":"📦 صندوق منحوت نادر!","eff":"chest_rare"},
+                ]
+            ),
+            "nether": Area(
+                name="النذر", emoji="🔥", level_req=15, explore_time=60,
+                sub_locations=["أرض الحمم", "حصون النذر", "غابات نارية"],
+                resources=[
+                    Resource("crimson_wood", "🔥", 2, 4, 20),
+                    Resource("fiery_coal", "🔥", 1, 2, 15),
+                    Resource("quartz", "⬜", 1, 3, 20),
+                    Resource("netherrack", "🟥", 2, 4, 30),
+                    Resource("blaze_rod", "🔥", 1, 1, 8),
+                    Resource("ghast_tear", "💧", 1, 1, 5),
+                ],
+                enemies=[
+                    Enemy("بليز", "🔥", 20, 6, 20, [("blaze_rod",1,0.5)], "fire"),
+                    Enemy("غاست", "👻", 15, 8, 18, [("ghast_tear",1,0.4)], "flying"),
+                    Enemy("زومبي ناري", "🧟‍♂️", 18, 5, 15, [("rotten_flesh",1,0.5)], "fire"),
+                ],
+                events=[
+                    {"name":"عاصفة حمم","msg":"🌋 عاصفة حمم!","eff":"lava_storm"},
+                ]
+            ),
+            "end": Area(
+                name="الإندر", emoji="🌌", level_req=25, explore_time=70,
+                sub_locations=["جزر عائمة", "مدينة الإندر"],
+                resources=[
+                    Resource("ender_stone", "🟪", 2, 4, 25),
+                    Resource("ender_pearl", "🔮", 1, 2, 10),
+                    Resource("diamond", "💎", 1, 1, 5),
+                ],
+                enemies=[
+                    Enemy("إندرمان", "⬛", 20, 7, 25, [("ender_pearl",1,0.5)], "teleport"),
+                ],
+                events=[
+                    {"name":"سفينة الإندر","msg":"🚀 وجدت سفينة الإندر!","eff":"ender_ship"},
+                ]
+            ),
+        }
+
+    @classmethod
+    def get_area(cls, name: str):
+        return cls.get_all_areas().get(name)
     
     @classmethod
-    def get_area(cls, area_name: str) -> Optional[Area]:
-        return cls.AREAS.get(area_name)
+    def roll_resource(cls, area: Area, luck=0):
+        total_w = sum(r.weight + luck for r in area.resources)
+        roll = random.randint(1, total_w)
+        current = 0
+        for r in area.resources:
+            current += r.weight + luck
+            if roll <= current:
+                return r
+        return area.resources[0]
     
     @classmethod
-    def get_random_resource(cls, area: Area, player_luck: int = 0) -> Optional[Resource]:
-        """اختيار مورد عشوائي مع مراعاة الحظ"""
-        luck_bonus = player_luck * 0.01  # كل نقطة حظ تزيد 1% فرصة الموارد النادرة
-        weighted_resources = []
-        
-        for resource in area.resources:
-            effective_rarity = resource.rarity + luck_bonus
-            weighted_resources.extend([resource] * int(effective_rarity * 100))
-        
-        return random.choice(weighted_resources) if weighted_resources else None
-    
-    @classmethod
-    def get_random_enemy(cls, area: Area, world_event_bonus: float = 0) -> Optional[Enemy]:
-        """اختيار عدو عشوائي مع احتمالية ظهور أعداء نادرين"""
-        if random.random() < 0.3 + world_event_bonus:  # 30% فرصة مواجهة عدو
+    def roll_enemy(cls, area: Area):
+        if random.random() < 0.35:
             return random.choice(area.enemies)
         return None
