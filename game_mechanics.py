@@ -1,146 +1,251 @@
-import random
+import random, threading, time
 from datetime import datetime, timedelta
-from database import Player, Session
 from world_data import WorldData
-from crafting_system import CraftingSystem
 
 class GameMechanics:
-    def __init__(self, session: Session):
+    def __init__(self, session):
         self.session = session
     
-    def explore(self, player: Player, area_name: str) -> dict:
-        area = WorldData.get_area(area_name)
-        if not area:
-            return {"error": "منطقة غير موجودة"}
-        if player.level < area.level_req:
-            return {"error": f"تحتاج مستوى {area.level_req}"}
-        
-        # Time calculation
-        et = area.explore_time * (1 - player.speed * 0.005)
-        if player.has_item("saddle"): et *= 0.5
-        if player.has_item("compass"): et *= 0.8
-        if player.has_item("elytra"): et *= 0.5
-        
-        # Hunger cost
-        hunger = max(1, int(et / 25))
-        player.current_hunger = max(0, player.current_hunger - hunger)
-        
-        # Gather resources
-        rewards = []
-        for _ in range(random.randint(3, 6)):
-            r = WorldData.roll_resource(area, player.luck)
-            amt = random.randint(r.min_amount, r.max_amount)
-            player.add_item(r.name, amt)
-            rewards.append(f"{r.emoji} {r.name} x{amt}")
-        
-        # Enemy encounter
-        enemy_result = None
-        enemy = WorldData.roll_enemy(area)
-        if enemy:
-            enemy_result = self.battle(player, enemy)
-        
-        # Random event
-        event_result = None
-        if area.events and random.random() < 0.25:
-            ev = random.choice(area.events)
-            event_result = self.handle_event(player, ev)
-        
-        # XP
-        xp = random.randint(5, 15) + player.luck
-        player.add_xp(xp)
-        
-        # Starvation check
-        starve_msg = None
-        if player.current_hunger <= 0:
-            player.current_health = max(1, player.current_health - 3)
-            starve_msg = "⚠️ أنت تتضور جوعاً!"
-        
-        player.last_action = datetime.utcnow()
-        player.current_area = area_name
+    # ===== نظام تكسير الشجرة =====
+    def start_chopping(self, player, tree):
+        player.is_exploring = True
+        player.explore_end_time = None
         self.session.commit()
         
         return {
-            "area": area.name, "emoji": area.emoji, "time": int(et),
-            "rewards": rewards, "enemy": enemy_result, "event": event_result,
-            "xp": xp, "hunger": player.current_hunger, "health": player.current_health,
-            "starve": starve_msg
+            "tree": tree,
+            "total_blocks": tree.total_blocks,
+            "blocks_left": tree.total_blocks,
+            "animation": self.get_tree_animation(tree.total_blocks, tree.total_blocks)
         }
     
-    def battle(self, player: Player, enemy) -> dict:
+    def chop_block(self, player, tree, blocks_left):
+        if blocks_left <= 0:
+            return {"done": True, "msg": "🌳 الشجرة خلاص انكسرت!"}
+        
+        blocks_left -= 1
+        
+        # الموارد الأساسية
+        rewards = []
+        for res, amt in tree.resources:
+            player.add_item(res, amt)
+            rewards.append(f"{res} x{amt}")
+        
+        # الموارد النادرة
+        if tree.rare_drop:
+            rare_res, rare_amt, prob = tree.rare_drop
+            if random.random() < prob:
+                player.add_item(rare_res, rare_amt)
+                rewards.append(f"✨ {rare_res} x{rare_amt}!")
+        
+        # نقص الجوع
+        player.current_hunger = max(0, player.current_hunger - 0.5)
+        if player.current_hunger <= 0:
+            player.current_health = max(0, player.current_health - 2)
+        
+        player.add_xp(1)
+        self.session.commit()
+        
+        result = {
+            "done": blocks_left <= 0,
+            "blocks_left": blocks_left,
+            "rewards": rewards,
+            "animation": self.get_tree_animation(tree.total_blocks, blocks_left),
+            "hunger": player.current_hunger,
+            "health": player.current_health
+        }
+        
+        if player.current_health <= 0:
+            result["dead"] = True
+            result["msg"] = "💀 لقد مت من الجوع!"
+            self.respawn(player)
+        
+        return result
+    
+    def get_tree_animation(self, total, left):
+        broken = total - left
+        trunk = ""
+        for i in range(total):
+            if i < broken:
+                trunk += "🟫"
+            else:
+                trunk += "🟩"
+        
+        leaves = "🌿" if left > 2 else "🍂" if left > 0 else ""
+        
+        return f"""
+   {leaves}
+    {leaves} {leaves}
+     ||
+   {trunk}
+        """
+    
+    # ===== نظام تكسير الحجر =====
+    def start_mining(self, player, rock):
+        player.is_exploring = True
+        player.explore_end_time = None
+        self.session.commit()
+        
+        return {
+            "rock": rock,
+            "total_blocks": rock.total_blocks,
+            "blocks_left": rock.total_blocks,
+            "animation": self.get_rock_animation(rock.total_blocks, rock.total_blocks)
+        }
+    
+    def mine_block(self, player, rock, blocks_left):
+        if blocks_left <= 0:
+            return {"done": True, "msg": "⛏️ الحجر اتكسر كله!"}
+        
+        blocks_left -= 1
+        
+        rewards = []
+        for res, amt in rock.resources:
+            player.add_item(res, amt)
+            rewards.append(f"{res} x{amt}")
+        
+        if rock.rare_drop:
+            rare_res, rare_amt, prob = rock.rare_drop
+            if random.random() < prob:
+                player.add_item(rare_res, rare_amt)
+                rewards.append(f"💎 {rare_res} x{rare_amt}!")
+        
+        player.current_hunger = max(0, player.current_hunger - 0.5)
+        if player.current_hunger <= 0:
+            player.current_health = max(0, player.current_health - 2)
+        
+        player.add_xp(1)
+        self.session.commit()
+        
+        result = {
+            "done": blocks_left <= 0,
+            "blocks_left": blocks_left,
+            "rewards": rewards,
+            "animation": self.get_rock_animation(rock.total_blocks, blocks_left),
+            "hunger": player.current_hunger,
+            "health": player.current_health
+        }
+        
+        if player.current_health <= 0:
+            result["dead"] = True
+            result["msg"] = "💀 لقد مت!"
+            self.respawn(player)
+        
+        return result
+    
+    def get_rock_animation(self, total, left):
+        broken = total - left
+        rock_line = ""
+        for i in range(total):
+            if i < broken:
+                rock_line += "🪨"
+            else:
+                rock_line += "⬛"
+        
+        sparkles = "✨" if broken > 0 else ""
+        
+        return f"""
+   {sparkles}
+   {rock_line}
+   ⛏️ اضرب!
+        """
+    
+    # ===== صيد الحيوانات =====
+    def hunt_animal(self, player, animal_name):
+        if animal_name not in WorldData.ANIMAL_LOOT:
+            return {"error": "حيوان غير معروف"}
+        
+        loot = WorldData.ANIMAL_LOOT[animal_name]
+        rewards = []
+        for res, amt in loot:
+            player.add_item(res, amt)
+            rewards.append(f"{res} x{amt}")
+        
+        player.current_hunger = max(0, player.current_hunger - 1)
+        player.add_xp(3)
+        self.session.commit()
+        
+        return {"animal": animal_name, "rewards": rewards}
+    
+    # ===== القتال =====
+    def start_battle(self, player, enemy):
+        return {
+            "enemy": enemy,
+            "enemy_hp": enemy.health,
+            "player_hp": player.current_health,
+            "max_enemy_hp": enemy.health,
+            "round": 0,
+            "log": [f"⚔️ بدأ القتال مع {enemy.emoji} {enemy.name}!"]
+        }
+    
+    def battle_action(self, player, enemy, enemy_hp, player_hp, action, log, round_num):
         p_dmg = self.calc_damage(player)
         p_def = self.calc_defense(player)
         
-        # Pet bonus
-        if player.pet == "wolf":
-            p_dmg += 3
-        
-        php = player.current_health
-        ehp = enemy.health
-        rounds = []
-        escaped = False
-        
-        for rnd in range(1, 6):
-            # Player attack
+        if action == "attack":
             atk = max(1, p_dmg - random.randint(0, 3))
-            ehp -= atk
+            enemy_hp -= atk
+            log.append(f"🗡️ ضربت {enemy.name}! -{atk} ({enemy_hp}/{enemy.health})")
             
-            if ehp <= 0:
-                rounds.append({"r":rnd, "patk":atk, "win":True})
-                break
-            
-            # Enemy attack
-            eatk = max(1, enemy.damage - p_def//3)
-            if enemy.special == "explode" and rnd >= 3:
+            if enemy_hp <= 0:
+                # انتصر اللاعب
+                player.add_xp(enemy.xp)
+                drops = []
+                for item, amt, prob in enemy.drops:
+                    if random.random() < prob:
+                        player.add_item(item, amt)
+                        drops.append(f"{item} x{amt}")
+                
+                # ترويض الذئب
+                if enemy.special == "tameable" and random.random() < 0.2:
+                    player.pet = "wolf"
+                    log.append("🐺 تم ترويض الذئب!")
+                
+                self.session.commit()
+                return {"win": True, "enemy_hp": 0, "player_hp": player_hp, "log": log, "drops": drops, "xp": enemy.xp}
+        
+        elif action == "eat":
+            if player.current_hunger < 20:
+                player.current_hunger = min(20, player.current_hunger + 5)
+                log.append("🍖 أكلت! +5 شبع")
+            else:
+                log.append("🍖 أنت شبعان!")
+        
+        elif action == "run":
+            if random.random() < 0.5:
+                log.append("🏃 هربت بنجاح!")
+                self.session.commit()
+                return {"escaped": True, "log": log}
+            else:
+                log.append("🏃 فشلت في الهروب!")
+        
+        # دور العدو
+        if enemy_hp > 0:
+            eatk = max(1, enemy.damage - p_def // 3)
+            if enemy.special == "explode" and round_num >= 3:
                 eatk *= 2
-                rounds.append({"r":rnd, "patk":atk, "eatk":eatk, "sp":"💥 انفجار!"})
+                log.append(f"💥 {enemy.name} انفجر! -{eatk}")
             elif enemy.special == "steal" and random.random() < 0.3:
-                # Steal random item
                 inv = player.get_inv()
                 items = [s for s in inv.values() if s]
                 if items:
                     stolen = random.choice(items)
-                    stolen["amount"] = max(1, stolen["amount"]-1)
-                    rounds.append({"r":rnd, "patk":atk, "eatk":eatk, "sp":f"🪲 سرق {stolen['name']}!"})
-                else:
-                    rounds.append({"r":rnd, "patk":atk, "eatk":eatk})
+                    stolen["amount"] = max(1, stolen["amount"] - 1)
+                    log.append(f"🪲 سرق {stolen['name']}!")
             else:
-                rounds.append({"r":rnd, "patk":atk, "eatk":eatk})
+                log.append(f"💢 {enemy.name} ضربك! -{eatk}")
             
-            php -= eatk
-            if php <= 0:
-                break
-            
-            # Tame wolf
-            if enemy.special == "tameable" and random.random() < 0.15:
-                player.pet = "wolf"
-                escaped = True
-                rounds.append({"r":rnd, "tame":"🐺 تم ترويض الذئب!"})
-                break
-            
-            if random.random() < 0.2 and rnd >= 2:
-                escaped = True
-                break
+            player_hp -= eatk
         
-        old_hp = player.current_health
-        player.current_health = max(1, php)
+        player.current_health = max(0, player_hp)
+        self.session.commit()
         
-        result = {"name":enemy.name, "emoji":enemy.emoji, "rounds":rounds, "escaped":escaped}
+        if player_hp <= 0:
+            log.append("💀 لقد مت!")
+            self.respawn(player)
+            return {"dead": True, "log": log}
         
-        if ehp <= 0:
-            player.add_xp(enemy.xp)
-            drops = []
-            for item, amt, prob in enemy.drops:
-                if random.random() < prob:
-                    player.add_item(item, amt)
-                    drops.append(f"{item} x{amt}")
-            result["win"] = True
-            result["xp"] = enemy.xp
-            result["drops"] = drops
-        else:
-            result["win"] = False
-            result["hp_lost"] = old_hp - player.current_health
-        
-        return result
+        return {"enemy_hp": enemy_hp, "player_hp": player_hp, "log": log, "round": round_num + 1}
     
     def calc_damage(self, player):
         dmg = 2
@@ -149,6 +254,8 @@ class GameMechanics:
         weapon_dmg = {"wooden_sword":4,"stone_sword":5,"iron_sword":6,"diamond_sword":7,"ender_sword":10}
         if w in weapon_dmg:
             dmg += weapon_dmg[w]
+        if player.pet == "wolf":
+            dmg += 3
         return dmg + int(dmg * player.strength * 0.02)
     
     def calc_defense(self, player):
@@ -162,30 +269,15 @@ class GameMechanics:
                 elif "fire" in str(armor): defense += 4
         return defense
     
-    def handle_event(self, player, ev):
-        eff = ev["eff"]
-        if eff == "gold":
-            player.add_item("gold_ore", random.randint(3, 8))
-        elif eff == "minerals":
-            ores = ["iron_ore","gold_ore","coal"]
-            player.add_item(random.choice(ores), random.randint(2, 5))
-        elif eff == "wolf_attack":
-            dmg = random.randint(5, 12)
-            player.current_health = max(1, player.current_health - dmg)
-            return {"name":ev["name"], "msg":f"{ev['msg']} خسرت {dmg} صحة"}
-        elif eff == "chest_basic":
-            player.add_item("bread", 2)
-            player.add_item("wooden_sword", 1)
-        elif eff == "chest_iron":
-            player.add_item("gold_ore", 3)
-            player.add_item("iron_pickaxe", 1)
-        elif eff == "chest_rare":
-            player.add_item("diamond", 1)
-            player.add_item("golden_apple", 1)
-        elif eff == "ender_ship":
-            player.add_item("elytra", 1)
-        return {"name":ev["name"], "msg":ev["msg"]}
+    def respawn(self, player):
+        player.current_health = player.max_health // 2
+        player.current_hunger = 10
+        player.current_area = "forest"
+        player.is_exploring = False
+        player.game_time = 0
+        self.session.commit()
     
+    # ===== الأكل =====
     def eat(self, player, food):
         food_db = {
             "apple":4,"bread":5,"cooked_beef":8,"tropical_fruit":8,
@@ -204,13 +296,13 @@ class GameMechanics:
         effects = []
         if food == "golden_apple":
             player.current_health = min(player.max_health, player.current_health + 4)
-            effects.append("💛 +4 صحة")
         if "raw" in food and random.random() < 0.3:
             effects.append("⚠️ تسمم غذائي!")
         
         self.session.commit()
         return {"food":food,"hunger":val,"current":player.current_hunger,"effects":effects}
     
+    # ===== النوم =====
     def sleep(self, player):
         if not player.can_sleep():
             left = 12 - (datetime.utcnow() - player.last_sleep).seconds // 3600
@@ -218,55 +310,12 @@ class GameMechanics:
         player.current_health = player.max_health
         player.current_hunger = player.max_hunger
         player.last_sleep = datetime.utcnow()
+        player.game_time = 0  # الصباح
         self.session.commit()
         return {"msg":"😴 نمت جيداً!","hp":player.current_health,"hunger":player.current_hunger}
     
-    def temple(self, player):
-        if player.level < 10:
-            return {"error":"تحتاج مستوى 10"}
-        return {
-            "msg":"🏛️ دخلت المعبد! 5 غرف بانتظارك",
-            "rooms":[
-                {"r":1,"name":"الأبواب","desc":"اختر باب (1-3)"},
-                {"r":2,"name":"الأشباح","q":"كم عدد ألوان قوس قزح؟","a":"7"},
-                {"r":3,"name":"اللهب","desc":"اختر طريق (يمين/يسار/وسط)"},
-                {"r":4,"name":"الفخاخ","desc":"اختر زر آمن (1-3)"},
-                {"r":5,"name":"الكنز","desc":"اختر صندوق (1-3)"},
-            ]
-        }
-    
-    def solve_temple(self, player, room, answer):
-        if room == 1:
-            ok = str(answer) == str(random.randint(1,3))
-            dmg = 5
-        elif room == 2:
-            ok = answer.strip() in ["7","سبعة"]
-            dmg = 3
-        elif room == 3:
-            ok = answer in ["يمين","يسار","وسط"] and answer == random.choice(["يمين","يسار","وسط"])
-            dmg = 8
-        elif room == 4:
-            ok = str(answer) == str(random.randint(1,3))
-            dmg = 6
-        elif room == 5:
-            ok = str(answer) == str(random.randint(1,3))
-            if ok:
-                gems = ["جوهرة القوة","جوهرة السرعة","جوهرة الحماية","جوهرة الثروة","جوهرة النار"]
-                gem = random.choice(gems)
-                player.add_item(gem, 1)
-                player.add_xp(30)
-                if "قوة" in gem: player.strength = min(100, player.strength+5)
-                elif "سرعة" in gem: player.speed = min(100, player.speed+5)
-                elif "حماية" in gem: player.endurance = min(100, player.endurance+5)
-                elif "ثروة" in gem: player.luck = min(100, player.luck+5)
-                self.session.commit()
-                return {"win":True,"gem":gem,"msg":f"🎉 حصلت على {gem}!"}
-            return {"win":False,"msg":"📦 صندوق فارغ!"}
-        else:
-            return {"error":"غرفة غير معروفة"}
-        
-        if not ok:
-            player.current_health = max(1, player.current_health - dmg)
-            self.session.commit()
-            return {"win":False,"msg":f"❌ خطأ! -{dmg} صحة"}
-        return {"win":True,"msg":"✅ صحيح!","next":room+1}
+    # ===== نظام الوقت =====
+    def advance_game_time(self, player, minutes=10):
+        player.game_time = (player.game_time + minutes) % 240
+        self.session.commit()
+        return player.is_night()
