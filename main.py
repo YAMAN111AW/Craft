@@ -10,8 +10,7 @@ bot = telebot.TeleBot(TOKEN)
 session = Session()
 gm = GameMechanics(session)
 
-# تخزين مؤقت للجلسات
-chop_sessions = {}  # {user_id: {"tree": tree, "blocks_left": n}}
+chop_sessions = {}
 mine_sessions = {}
 battle_sessions = {}
 
@@ -24,17 +23,29 @@ def menu():
     kb.add("❤️ حالتي", "📊 مهاراتي")
     return kb
 
+# دالة مساعدة لإرسال نصوص طويلة بدون مشاكل Markdown
+def send_safe(msg, text, **kwargs):
+    """إرسال رسالة بدون parse_mode لتجنب أخطاء Markdown"""
+    if 'parse_mode' in kwargs:
+        del kwargs['parse_mode']
+    return bot.send_message(msg.chat.id, text, **kwargs)
+
+def edit_safe(msg_id, chat_id, text, **kwargs):
+    """تعديل رسالة بدون parse_mode"""
+    if 'parse_mode' in kwargs:
+        del kwargs['parse_mode']
+    return bot.edit_message_text(text, chat_id, msg_id, **kwargs)
+
 @bot.message_handler(commands=['start'])
 def start(msg):
     p, new = get_player(session, msg.from_user.id, msg.from_user.first_name)
     if new:
-        txt = "🌟 *أهلاً بك في عالم ماينكرافت!*\n\nاستخدم الأزرار للتنقل."
+        txt = "🌟 أهلاً بك في عالم ماينكرافت!\n\nاستخدم الأزرار للتنقل."
     else:
         tod = p.get_time_of_day()
-        txt = f"👋 *{p.username}*\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
-    bot.send_message(msg.chat.id, txt, parse_mode='Markdown', reply_markup=menu())
+        txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
+    send_safe(msg, txt, reply_markup=menu())
 
-# ===== المناطق =====
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
 def area_menu(msg):
     area_name = "forest" if msg.text == "🌳 الغابة" else "cave"
@@ -42,42 +53,38 @@ def area_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
     
     if p.level < area.level_req:
-        return bot.reply_to(msg, f"❌ تحتاج مستوى {area.level_req}")
+        return send_safe(msg, f"❌ تحتاج مستوى {area.level_req}")
     
     tod = p.get_time_of_day()
     is_night = p.is_night()
     
-    txt = f"{area.emoji} *{area.name}* | 🕐 {tod}\n\n"
+    txt = f"{area.emoji} {area.name} | 🕐 {tod}\n\n"
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     
-    # أشجار أو صخور
     if area.trees:
         tree = WorldData.roll_tree(area)
-        txt += f"🌳 *{tree.name}* ({tree.total_blocks} مكعبات)\n"
+        txt += f"🌳 {tree.name} ({tree.total_blocks} مكعبات)\n"
         kb.add(types.InlineKeyboardButton(f"🪓 كسر {tree.name}", callback_data=f"chop_{area_name}"))
     
     if area.rocks:
         rock = WorldData.roll_rock(area)
-        txt += f"🪨 *{rock.name}* ({rock.total_blocks} مكعبات)\n"
+        txt += f"🪨 {rock.name} ({rock.total_blocks} مكعبات)\n"
         kb.add(types.InlineKeyboardButton(f"⛏️ كسر {rock.name}", callback_data=f"mine_{area_name}"))
     
-    # حيوانات
     if area.animals:
         animal = WorldData.roll_animal(area)
         if animal:
-            txt += f"\n{animal.emoji} *{animal.name}*\n"
+            txt += f"\n{animal.emoji} {animal.name}\n"
             kb.add(types.InlineKeyboardButton(f"🏹 صيد {animal.name}", callback_data=f"hunt_{animal.name}"))
     
-    # استكشاف عام
     kb.add(types.InlineKeyboardButton("🔍 استكشاف سريع", callback_data=f"explore_{area_name}"))
     
     if is_night:
-        txt += "\n⚠️ *إنه الليل! الأعداء في كل مكان!*"
+        txt += "\n⚠️ إنه الليل! الأعداء في كل مكان!"
     
-    bot.send_message(msg.chat.id, txt, parse_mode='Markdown', reply_markup=kb)
+    send_safe(msg, txt, reply_markup=kb)
 
-# ===== تكسير الشجرة =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("chop_"))
 def start_chopping(call):
     area_name = call.data.split("_")[1]
@@ -89,14 +96,14 @@ def start_chopping(call):
     
     chop_sessions[call.from_user.id] = {"tree": tree, "blocks_left": tree.total_blocks}
     
-    txt = f"🪓 *{tree.name}*\nالمكعبات: {tree.total_blocks}\n\n{result['animation']}"
+    txt = f"🪓 {tree.name}\nالمكعبات: {tree.total_blocks}\n\n{result['animation']}"
     txt += f"\n\nاضغط الزر لتكسر مكعب!"
     
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🪓 اكسر!", callback_data="do_chop"))
     kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop_action"))
     
-    bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=kb)
+    edit_safe(call.message.message_id, call.message.chat.id, txt, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "do_chop")
 def do_chop(call):
@@ -112,18 +119,18 @@ def do_chop(call):
     result = gm.chop_block(p, tree, blocks_left)
     
     if result.get("dead"):
-        bot.edit_message_text("💀 لقد مت! ابدأ من جديد /start", call.message.chat.id, call.message.message_id)
+        edit_safe(call.message.message_id, call.message.chat.id, "💀 لقد مت! ابدأ من جديد /start")
         del chop_sessions[call.from_user.id]
         return
     
     if result["done"]:
-        txt = f"🌳 *انكسرت الشجرة!*\n\n{result['animation']}\n\n🎁 {', '.join(result['rewards'])}"
+        txt = f"🌳 انكسرت الشجرة!\n\n{result['animation']}\n\n🎁 {', '.join(result['rewards'])}"
         del chop_sessions[call.from_user.id]
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"back_forest"))
+        kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"back_{session_data['tree'].name}"))
     else:
         chop_sessions[call.from_user.id]["blocks_left"] = result["blocks_left"]
-        txt = f"🪓 *{tree.name}*\nمتبقي: {result['blocks_left']}/{tree.total_blocks}\n\n{result['animation']}"
+        txt = f"🪓 {tree.name}\nمتبقي: {result['blocks_left']}/{tree.total_blocks}\n\n{result['animation']}"
         txt += f"\n🎁 {', '.join(result['rewards'])}"
         txt += f"\n🍖 {result['hunger']:.1f}/20 | ❤️ {result['health']}/20"
         
@@ -131,9 +138,8 @@ def do_chop(call):
         kb.add(types.InlineKeyboardButton("🪓 اكسر!", callback_data="do_chop"))
         kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop_action"))
     
-    bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=kb)
+    edit_safe(call.message.message_id, call.message.chat.id, txt, reply_markup=kb)
 
-# ===== تكسير الحجر =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("mine_"))
 def start_mining(call):
     area_name = call.data.split("_")[1]
@@ -145,14 +151,14 @@ def start_mining(call):
     
     mine_sessions[call.from_user.id] = {"rock": rock, "blocks_left": rock.total_blocks}
     
-    txt = f"⛏️ *{rock.name}*\nالمكعبات: {rock.total_blocks}\n\n{result['animation']}"
+    txt = f"⛏️ {rock.name}\nالمكعبات: {rock.total_blocks}\n\n{result['animation']}"
     txt += f"\n\nاضغط الزر لتكسر مكعب!"
     
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("⛏️ اكسر!", callback_data="do_mine"))
     kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop_action"))
     
-    bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=kb)
+    edit_safe(call.message.message_id, call.message.chat.id, txt, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "do_mine")
 def do_mine(call):
@@ -168,18 +174,18 @@ def do_mine(call):
     result = gm.mine_block(p, rock, blocks_left)
     
     if result.get("dead"):
-        bot.edit_message_text("💀 لقد مت! ابدأ من جديد /start", call.message.chat.id, call.message.message_id)
+        edit_safe(call.message.message_id, call.message.chat.id, "💀 لقد مت! ابدأ من جديد /start")
         del mine_sessions[call.from_user.id]
         return
     
     if result["done"]:
-        txt = f"⛏️ *انكسر الحجر!*\n\n{result['animation']}\n\n🎁 {', '.join(result['rewards'])}"
+        txt = f"⛏️ انكسر الحجر!\n\n{result['animation']}\n\n🎁 {', '.join(result['rewards'])}"
         del mine_sessions[call.from_user.id]
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"back_cave"))
     else:
         mine_sessions[call.from_user.id]["blocks_left"] = result["blocks_left"]
-        txt = f"⛏️ *{rock.name}*\nمتبقي: {result['blocks_left']}/{rock.total_blocks}\n\n{result['animation']}"
+        txt = f"⛏️ {rock.name}\nمتبقي: {result['blocks_left']}/{rock.total_blocks}\n\n{result['animation']}"
         txt += f"\n🎁 {', '.join(result['rewards'])}"
         txt += f"\n🍖 {result['hunger']:.1f}/20 | ❤️ {result['health']}/20"
         
@@ -187,9 +193,8 @@ def do_mine(call):
         kb.add(types.InlineKeyboardButton("⛏️ اكسر!", callback_data="do_mine"))
         kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop_action"))
     
-    bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=kb)
+    edit_safe(call.message.message_id, call.message.chat.id, txt, reply_markup=kb)
 
-# ===== صيد الحيوانات =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
 def hunt_animal(call):
     animal_name = call.data[5:]
@@ -200,9 +205,8 @@ def hunt_animal(call):
         return bot.answer_callback_query(call.id, result["error"])
     
     txt = f"🏹 صيد {result['animal']}\n\n🎁 {', '.join(result['rewards'])}"
-    bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    edit_safe(call.message.message_id, call.message.chat.id, txt)
 
-# ===== استكشاف سريع =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("explore_"))
 def quick_explore(call):
     area_name = call.data.split("_")[1]
@@ -212,7 +216,6 @@ def quick_explore(call):
     enemy = WorldData.roll_enemy(WorldData.get_area(area_name), is_night)
     
     if enemy:
-        # بدء قتال
         result = gm.start_battle(p, enemy)
         battle_sessions[call.from_user.id] = {
             "enemy": enemy,
@@ -222,7 +225,7 @@ def quick_explore(call):
             "round": 0
         }
         
-        txt = f"⚔️ *هجوم!*\n{enemy.emoji} {enemy.name} ظهر فجأة!\n\n❤️ حياتك: {result['player_hp']}\n❤️ العدو: {result['enemy_hp']}"
+        txt = f"⚔️ هجوم!\n{enemy.emoji} {enemy.name} ظهر فجأة!\n\n❤️ حياتك: {result['player_hp']}\n❤️ العدو: {result['enemy_hp']}"
         
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(
@@ -234,9 +237,8 @@ def quick_explore(call):
             types.InlineKeyboardButton("🏃 هروب", callback_data="bat_run")
         )
         
-        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=kb)
+        edit_safe(call.message.message_id, call.message.chat.id, txt, reply_markup=kb)
     else:
-        # مكافأة صغيرة
         rewards = ["apple", "bread", "coal"]
         r = random.choice(rewards)
         p.add_item(r, random.randint(1, 3))
@@ -244,9 +246,8 @@ def quick_explore(call):
         session.commit()
         
         txt = f"🔍 استكشاف سريع...\n\n🎁 وجدت {r}!"
-        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+        edit_safe(call.message.message_id, call.message.chat.id, txt)
 
-# ===== القتال =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("bat_"))
 def battle_action(call):
     p, _ = get_player(session, call.from_user.id)
@@ -260,14 +261,15 @@ def battle_action(call):
     result = gm.battle_action(p, data["enemy"], data["enemy_hp"], data["player_hp"], action, data["log"], data["round"])
     
     if result.get("win"):
-        txt = f"🎉 *انتصرت!*\n\n{chr(10).join(result['log'])}"
+        txt = "🎉 انتصرت!\n\n"
+        txt += "\n".join(result['log'][-5:])
         if result.get('drops'):
             txt += f"\n\n📦 {', '.join(result['drops'])}"
         txt += f"\n⭐ +{result['xp']}XP"
         del battle_sessions[call.from_user.id]
         kb = None
     elif result.get("escaped"):
-        txt = f"🏃 هربت!\n\n{chr(10).join(result['log'])}"
+        txt = "🏃 هربت!\n\n" + "\n".join(result['log'][-3:])
         del battle_sessions[call.from_user.id]
         kb = None
     elif result.get("dead"):
@@ -282,7 +284,8 @@ def battle_action(call):
             "round": result["round"]
         })
         
-        txt = f"⚔️ *الجولة {result['round']}*\n\n{chr(10).join(result['log'][-3:])}"
+        txt = f"⚔️ الجولة {result['round']}\n\n"
+        txt += "\n".join(result['log'][-3:])
         txt += f"\n\n❤️ حياتك: {result['player_hp']}\n❤️ {data['enemy'].name}: {result['enemy_hp']}/{data['enemy'].health}"
         
         kb = types.InlineKeyboardMarkup(row_width=2)
@@ -295,31 +298,19 @@ def battle_action(call):
             types.InlineKeyboardButton("🏃 هروب", callback_data="bat_run")
         )
     
-    bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=kb)
+    if kb:
+        edit_safe(call.message.message_id, call.message.chat.id, txt, reply_markup=kb)
+    else:
+        edit_safe(call.message.message_id, call.message.chat.id, txt)
 
-# ===== توقف =====
 @bot.callback_query_handler(func=lambda c: c.data == "stop_action")
 def stop_action(call):
     uid = call.from_user.id
     chop_sessions.pop(uid, None)
     mine_sessions.pop(uid, None)
     battle_sessions.pop(uid, None)
-    bot.edit_message_text("👋 تم التوقف", call.message.chat.id, call.message.message_id)
+    edit_safe(call.message.message_id, call.message.chat.id, "👋 تم التوقف")
 
-# ===== رجوع =====
-@bot.callback_query_handler(func=lambda c: c.data.startswith("back_"))
-def go_back(call):
-    area_name = call.data.split("_")[1]
-    area_menu(call.message)
-    # بنفس الاسم عشان تنعاد
-    class FakeMsg:
-        def __init__(self, msg):
-            self.text = "🌳 الغابة" if area_name == "forest" else "🕳️ الكهف"
-            self.from_user = msg.from_user
-            self.chat = msg.chat
-    area_menu(FakeMsg(call.message))
-
-# ===== القرية =====
 @bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
 def village(msg):
     kb = types.InlineKeyboardMarkup(row_width=2)
@@ -328,7 +319,7 @@ def village(msg):
         types.InlineKeyboardButton("📋 مهمة", callback_data="v_quest"),
         types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop")
     )
-    bot.send_message(msg.chat.id, "🏘️ *القرية*", parse_mode='Markdown', reply_markup=kb)
+    send_safe(msg, "🏘️ القرية", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data in ["v_sleep", "v_quest", "v_shop"])
 def village_actions(call):
@@ -339,7 +330,7 @@ def village_actions(call):
         if "error" in res:
             bot.answer_callback_query(call.id, res["error"])
         else:
-            bot.edit_message_text(f"😴 {res['msg']}\n❤️ {res['hp']} | 🍖 {res['hunger']}", call.message.chat.id, call.message.message_id)
+            edit_safe(call.message.message_id, call.message.chat.id, f"😴 {res['msg']}\n❤️ {res['hp']} | 🍖 {res['hunger']}")
     
     elif call.data == "v_quest":
         quests = [
@@ -356,43 +347,41 @@ def village_actions(call):
             bot.answer_callback_query(call.id, f"❌ تحتاج {q[2]} {q[1]}")
     
     elif call.data == "v_shop":
-        txt = "🛒 *متجر*\n/buy تفاح = 2 خشب\n/buy لحم = 1 حديد"
-        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+        txt = "🛒 متجر\n/buy تفاح = 2 خشب\n/buy لحم = 1 حديد"
+        edit_safe(call.message.message_id, call.message.chat.id, txt)
 
-# ===== مخزوني =====
 @bot.message_handler(func=lambda m: m.text == "🎒 مخزوني")
 def inventory(msg):
     p, _ = get_player(session, msg.from_user.id)
     inv = p.get_inv()
     items = [(i, s) for i, s in enumerate(inv.values()) if s]
     if not items:
-        return bot.reply_to(msg, "📭 المخزون فارغ")
+        return send_safe(msg, "📭 المخزون فارغ")
     
-    txt = "🎒 *مخزونك:*\n\n"
+    txt = "🎒 مخزونك:\n\n"
     for idx, slot in items[:18]:
         txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
     
     equip = p.get_equip()
-    txt += f"\n🎽 *المعدات:* {equip.get('weapon','لا شيء')}"
+    txt += f"\n🎽 المعدات: {equip.get('weapon','لا شيء')}"
     
-    bot.send_message(msg.chat.id, txt, parse_mode='Markdown')
+    send_safe(msg, txt)
 
-# ===== حذف من المخزون =====
 @bot.message_handler(func=lambda m: m.text == "🗑️ حذف من المخزون")
 def delete_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
     inv = p.get_inv()
     items = [(i, s) for i, s in enumerate(inv.values()) if s]
     if not items:
-        return bot.reply_to(msg, "📭 المخزون فارغ")
+        return send_safe(msg, "📭 المخزون فارغ")
     
-    txt = "🗑️ *اختر عنصر للحذف:*\n\n"
+    txt = "🗑️ اختر عنصر للحذف:\n\n"
     kb = types.InlineKeyboardMarkup(row_width=3)
     for idx, slot in items[:18]:
         txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
         kb.add(types.InlineKeyboardButton(f"🗑️ {idx+1}", callback_data=f"del_{idx}"))
     
-    bot.send_message(msg.chat.id, txt, parse_mode='Markdown', reply_markup=kb)
+    send_safe(msg, txt, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
 def delete_item(call):
@@ -400,9 +389,8 @@ def delete_item(call):
     slot_num = int(call.data.split("_")[1])
     p.delete_slot(slot_num)
     session.commit()
-    bot.edit_message_text(f"✅ تم حذف العنصر من الخانة {slot_num+1}", call.message.chat.id, call.message.message_id)
+    edit_safe(call.message.message_id, call.message.chat.id, f"✅ تم حذف العنصر من الخانة {slot_num+1}")
 
-# ===== تصنيع =====
 @bot.message_handler(func=lambda m: m.text == "🛠️ التصنيع")
 def craft_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
@@ -410,7 +398,7 @@ def craft_menu(msg):
     kb = types.InlineKeyboardMarkup(row_width=1)
     for i, r in enumerate(recipes[:20]):
         kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"craft_{i}"))
-    bot.send_message(msg.chat.id, "🛠️ *التصنيع*", parse_mode='Markdown', reply_markup=kb)
+    send_safe(msg, "🛠️ التصنيع", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("craft_"))
 def do_craft(call):
@@ -422,7 +410,6 @@ def do_craft(call):
         session.commit()
         bot.answer_callback_query(call.id, msg)
 
-# ===== أكل =====
 @bot.message_handler(func=lambda m: m.text == "🍖 أكل")
 def eat_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
@@ -431,12 +418,12 @@ def eat_menu(msg):
     foods = {s["name"]: s["amount"] for s in inv.values() if s and s["name"] in food_list}
     
     if not foods:
-        return bot.reply_to(msg, "🍖 لا طعام")
+        return send_safe(msg, "🍖 لا طعام")
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     for f, amt in foods.items():
         kb.add(types.InlineKeyboardButton(f"{f} x{amt}", callback_data=f"eat_{f}"))
-    bot.send_message(msg.chat.id, "🍖 *اختر*", parse_mode='Markdown', reply_markup=kb)
+    send_safe(msg, "🍖 اختر", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("eat_"))
 def do_eat(call):
@@ -449,18 +436,16 @@ def do_eat(call):
         txt = f"🍖 {food} | +{res['hunger']} شبع | {res['current']}/20"
         if res.get('effects'):
             txt += "\n" + "\n".join(res['effects'])
-        bot.edit_message_text(txt, call.message.chat.id, call.message.message_id)
+        edit_safe(call.message.message_id, call.message.chat.id, txt)
 
-# ===== حالتي =====
 @bot.message_handler(func=lambda m: m.text == "❤️ حالتي")
 def status(msg):
     p, _ = get_player(session, msg.from_user.id)
     titles = p.titles if isinstance(p.titles, list) else []
     tod = p.get_time_of_day()
     txt = f"👤 {p.username} | ⭐ Lv.{p.level}\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}\n🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n🐺 حيوان: {p.pet or 'لا يوجد'}"
-    bot.send_message(msg.chat.id, txt)
+    send_safe(msg, txt)
 
-# ===== مهاراتي =====
 @bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
 def skills(msg):
     p, _ = get_player(session, msg.from_user.id)
@@ -473,9 +458,9 @@ def skills(msg):
             types.InlineKeyboardButton("💪", callback_data="sk_endurance"),
             types.InlineKeyboardButton("🍀", callback_data="sk_luck")
         )
-        bot.send_message(msg.chat.id, txt, reply_markup=kb)
+        send_safe(msg, txt, reply_markup=kb)
     else:
-        bot.send_message(msg.chat.id, txt)
+        send_safe(msg, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sk_"))
 def upgrade_skill(call):
@@ -491,26 +476,25 @@ def upgrade_skill(call):
         bot.answer_callback_query(call.id, f"✅ {sk} +1")
         skills(call.message)
 
-# ===== شراء =====
 @bot.message_handler(commands=['buy'])
 def buy(msg):
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
-        return bot.reply_to(msg, "/buy تفاح او /buy لحم")
+        return send_safe(msg, "/buy تفاح او /buy لحم")
     shop = {"تفاح":{"price":"oak_wood","amt":2,"give":"apple","gamt":3},
             "لحم":{"price":"iron_ore","amt":1,"give":"cooked_beef","gamt":1}}
     item = args[1]
     if item not in shop:
-        return bot.reply_to(msg, "❌ غير متوفر")
+        return send_safe(msg, "❌ غير متوفر")
     s = shop[item]
     if p.has_item(s["price"], s["amt"]):
         p.remove_item(s["price"], s["amt"])
         p.add_item(s["give"], s["gamt"])
         session.commit()
-        bot.reply_to(msg, f"✅ اشتريت {item}!")
+        send_safe(msg, f"✅ اشتريت {item}!")
     else:
-        bot.reply_to(msg, f"❌ تحتاج {s['amt']} {s['price']}")
+        send_safe(msg, f"❌ تحتاج {s['amt']} {s['price']}")
 
 print("🤖 البوت يعمل...")
 bot.infinity_polling()
