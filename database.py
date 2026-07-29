@@ -1,9 +1,8 @@
-import os
+import os, json
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, Column, BigInteger, Integer, String, JSON, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime, timedelta
-import json
 
 Base = declarative_base()
 
@@ -13,45 +12,54 @@ class Player(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String, default="Player")
+    
+    # المستوى والخبرة
     level = Column(Integer, default=1)
     xp = Column(Integer, default=0)
     skill_points = Column(Integer, default=0)
     
-    # Stats
+    # الصحة والجوع
     max_health = Column(Integer, default=20)
     current_health = Column(Integer, default=20)
     max_hunger = Column(Integer, default=20)
     current_hunger = Column(Integer, default=20)
     
-    # Skills
+    # المهارات
     strength = Column(Integer, default=0)
     speed = Column(Integer, default=0)
     endurance = Column(Integer, default=0)
     luck = Column(Integer, default=0)
     
-    # Inventory & Equipment - تخزين كنص JSON
+    # المخزون والمعدات
     inventory = Column(JSON, default=lambda: {f"slot_{i}": None for i in range(36)})
     equipment = Column(JSON, default=lambda: {
         "helmet": None, "chestplate": None, "leggings": None, 
         "boots": None, "weapon": None, "shield": None
     })
     
-    # Location & Status
+    # الحالة والموقع
     current_area = Column(String, default="forest")
     last_action = Column(DateTime, default=datetime.utcnow)
     last_sleep = Column(DateTime, default=datetime.utcnow)
     status_effects = Column(JSON, default=list)
+    is_exploring = Column(Boolean, default=False)
+    explore_end_time = Column(DateTime, default=None)
     
-    # Achievements
+    # الإنجازات
     titles = Column(JSON, default=list)
     recipes_unlocked = Column(JSON, default=lambda: ["level_1"])
     defeated_ender_dragon = Column(Boolean, default=False)
     
-    # Pet
-    pet = Column(String, default=None)  # None, "wolf"
+    # حيوان أليف
+    pet = Column(String, default=None)
     
+    # وقت اللعبة (لنظام الليل والنهار)
+    game_time = Column(Integer, default=0)  # 0-240 (0=فجر, 120=غروب, 240=فجر جديد)
+    
+    # تاريخ الإنشاء
     created_at = Column(DateTime, default=datetime.utcnow)
     
+    # ===== دوال مساعدة =====
     def get_inv(self):
         if isinstance(self.inventory, str):
             return json.loads(self.inventory)
@@ -70,25 +78,17 @@ class Player(Base):
     
     def has_item(self, item_name, amount=1):
         inv = self.get_inv()
-        total = sum(
-            slot.get("amount", 0) 
-            for slot in inv.values() 
-            if slot and slot.get("name") == item_name
-        )
+        total = sum(s.get("amount", 0) for s in inv.values() if s and s.get("name") == item_name)
         return total >= amount
     
     def count_item(self, item_name):
         inv = self.get_inv()
-        return sum(
-            slot.get("amount", 0) 
-            for slot in inv.values() 
-            if slot and slot.get("name") == item_name
-        )
+        return sum(s.get("amount", 0) for s in inv.values() if s and s.get("name") == item_name)
     
     def add_item(self, item_name, amount=1):
         inv = self.get_inv()
         
-        # Try to stack first
+        # نجمع مع الموجود
         for key, slot in inv.items():
             if slot and slot.get("name") == item_name and slot.get("amount", 0) < 64:
                 space = 64 - slot["amount"]
@@ -99,16 +99,22 @@ class Player(Base):
                     self.save_inv(inv)
                     return True
         
-        # Use empty slots
-        for i in range(36):
-            key = f"slot_{i}"
-            if not inv.get(key):
-                inv[key] = {"name": item_name, "amount": min(amount, 64)}
+        # نضيف في خانة فاضية
+        while amount > 0:
+            placed = False
+            for i in range(36):
+                key = f"slot_{i}"
+                if not inv.get(key):
+                    inv[key] = {"name": item_name, "amount": min(amount, 64)}
+                    amount -= min(amount, 64)
+                    placed = True
+                    break
+            if not placed:
                 self.save_inv(inv)
-                return True
+                return False
         
         self.save_inv(inv)
-        return False
+        return True
     
     def remove_item(self, item_name, amount=1):
         inv = self.get_inv()
@@ -129,6 +135,12 @@ class Player(Base):
         self.save_inv(inv)
         return remaining <= 0
     
+    def delete_slot(self, slot_num):
+        inv = self.get_inv()
+        key = f"slot_{slot_num}"
+        inv[key] = None
+        self.save_inv(inv)
+    
     def can_sleep(self):
         return (datetime.utcnow() - self.last_sleep).total_seconds() >= 43200
     
@@ -142,19 +154,39 @@ class Player(Base):
             if self.level % 5 == 0:
                 self.skill_points += 1
             
-            recipes = self.recipes_unlocked if isinstance(self.recipes_unlocked, list) else json.loads(self.recipes_unlocked)
+            recipes = self.recipes_unlocked
+            if isinstance(recipes, str):
+                recipes = json.loads(recipes)
             lvl = self.level // 5 + 1
             key = f"level_{lvl}"
             if lvl <= 5 and key not in recipes:
                 recipes.append(key)
                 self.recipes_unlocked = recipes
         
-        titles = self.titles if isinstance(self.titles, list) else json.loads(self.titles)
+        titles = self.titles
+        if isinstance(titles, str):
+            titles = json.loads(titles)
         titles_map = {10:"مبتدئ",20:"مستكشف",30:"محارب",40:"صياد",50:"بناء",60:"ساحر",70:"بطل",80:"أسطورة"}
         for lvl, t in titles_map.items():
             if self.level >= lvl and t not in titles:
                 titles.append(t)
         self.titles = titles
+    
+    def is_night(self):
+        """هل الوقت ليل؟ (بين 120 و 240)"""
+        return 120 <= self.game_time <= 240
+    
+    def get_time_of_day(self):
+        """يحول game_time لوقت مفهوم"""
+        if self.game_time < 60:
+            return "🌅 الفجر"
+        elif self.game_time < 120:
+            return "☀️ النهار"
+        elif self.game_time < 180:
+            return "🌅 الغروب"
+        else:
+            return "🌙 الليل"
+
 
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///mc.db')
 if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
