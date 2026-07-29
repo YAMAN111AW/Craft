@@ -44,8 +44,11 @@ class CraftingSystem:
     @classmethod
     def get_recipes(cls, player):
         all_recipes = []
-        recipes_list = player.recipes_unlocked if isinstance(player.recipes_unlocked, list) else player.recipes_unlocked
-        for level in recipes_list:
+        recipes = player.recipes_unlocked
+        if isinstance(recipes, str):
+            import json
+            recipes = json.loads(recipes)
+        for level in recipes:
             if level in cls.RECIPES:
                 all_recipes.extend(cls.RECIPES[level])
         return all_recipes
@@ -55,7 +58,7 @@ class CraftingSystem:
         for item, amt in recipe["in"].items():
             if not player.has_item(item, amt):
                 return False, f"تحتاج {amt} {item}"
-        return True, "يمكنك التصنيع"
+        return True, "✅"
 
     @classmethod
     def craft(cls, player, recipe):
