@@ -53,19 +53,35 @@ class Player(Base):
     # حيوان أليف
     pet = Column(String, default=None)
     
-    # وقت اللعبة (لنظام الليل والنهار)
-    game_time = Column(Integer, default=0)  # 0-240
+    # وقت اللعبة
+    game_time = Column(Integer, default=0)
     
     # تاريخ الإنشاء
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # ===== دوال مساعدة =====
     def get_inv(self):
+        """جلب المخزون مع التأكد من صحته"""
+        if self.inventory is None:
+            self.inventory = {f"slot_{i}": None for i in range(36)}
+            return self.inventory
+        
         if isinstance(self.inventory, str):
-            return json.loads(self.inventory)
-        return self.inventory or {f"slot_{i}": None for i in range(36)}
+            try:
+                return json.loads(self.inventory)
+            except:
+                return {f"slot_{i}": None for i in range(36)}
+        
+        # التأكد من وجود كل الخانات
+        for i in range(36):
+            key = f"slot_{i}"
+            if key not in self.inventory:
+                self.inventory[key] = None
+        
+        return self.inventory
     
     def save_inv(self, inv):
+        """حفظ المخزون"""
         self.inventory = inv
     
     def get_equip(self):
@@ -78,35 +94,47 @@ class Player(Base):
     
     def has_item(self, item_name, amount=1):
         inv = self.get_inv()
-        total = sum(s.get("amount", 0) for s in inv.values() if s and s.get("name") == item_name)
+        total = 0
+        for slot in inv.values():
+            if slot and slot.get("name") == item_name:
+                total += slot.get("amount", 0)
         return total >= amount
     
     def count_item(self, item_name):
         inv = self.get_inv()
-        return sum(s.get("amount", 0) for s in inv.values() if s and s.get("name") == item_name)
+        total = 0
+        for slot in inv.values():
+            if slot and slot.get("name") == item_name:
+                total += slot.get("amount", 0)
+        return total
     
     def add_item(self, item_name, amount=1):
+        """إضافة عنصر للمخزون - مع حفظ تلقائي"""
         inv = self.get_inv()
+        remaining = amount
         
-        # نجمع مع الموجود
+        # 1. نجمع مع العناصر الموجودة
         for key, slot in inv.items():
-            if slot and slot.get("name") == item_name and slot.get("amount", 0) < 64:
-                space = 64 - slot["amount"]
-                add = min(amount, space)
-                slot["amount"] += add
-                amount -= add
-                if amount <= 0:
-                    self.save_inv(inv)
-                    return True
+            if slot and slot.get("name") == item_name:
+                current = slot.get("amount", 0)
+                if current < 64:
+                    space = 64 - current
+                    add = min(remaining, space)
+                    slot["amount"] = current + add
+                    remaining -= add
+                    if remaining <= 0:
+                        self.save_inv(inv)
+                        return True
         
-        # نضيف في خانة فاضية
-        while amount > 0:
+        # 2. نضيف في خانات فارغة
+        while remaining > 0:
             placed = False
             for i in range(36):
                 key = f"slot_{i}"
-                if not inv.get(key):
-                    inv[key] = {"name": item_name, "amount": min(amount, 64)}
-                    amount -= min(amount, 64)
+                if inv.get(key) is None:
+                    add = min(remaining, 64)
+                    inv[key] = {"name": item_name, "amount": add}
+                    remaining -= add
                     placed = True
                     break
             if not placed:
@@ -117,17 +145,20 @@ class Player(Base):
         return True
     
     def remove_item(self, item_name, amount=1):
+        """حذف عنصر من المخزون"""
         inv = self.get_inv()
         remaining = amount
         
         for key, slot in inv.items():
             if slot and slot.get("name") == item_name:
-                if slot["amount"] <= remaining:
-                    remaining -= slot["amount"]
+                current = slot.get("amount", 0)
+                if current <= remaining:
+                    remaining -= current
                     inv[key] = None
                 else:
-                    slot["amount"] -= remaining
+                    slot["amount"] = current - remaining
                     remaining = 0
+                
                 if remaining <= 0:
                     self.save_inv(inv)
                     return True
@@ -144,14 +175,11 @@ class Player(Base):
     def can_sleep(self):
         return (datetime.utcnow() - self.last_sleep).total_seconds() >= 43200
     
-    # ===== دوال الوقت الجديدة =====
     def advance_time(self, minutes=5):
-        """تقدم الوقت بمقدار دقائق معينة"""
         self.game_time = (self.game_time + minutes) % 240
         return self.get_time_of_day()
     
     def get_time_of_day(self):
-        """يحول game_time لوقت مفهوم مع تفاصيل أكثر"""
         if self.game_time < 20:
             return "🌅 الفجر"
         elif self.game_time < 60:
@@ -166,11 +194,9 @@ class Player(Base):
             return "🌙 الليل"
     
     def is_night(self):
-        """هل الوقت ليل؟ (بين 180 و 240)"""
         return self.game_time >= 180
     
     def get_time_emoji(self):
-        """إيموجي حسب الوقت"""
         if self.game_time < 20:
             return "🌅"
         elif self.game_time < 60:
