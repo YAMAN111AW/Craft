@@ -54,7 +54,7 @@ class Player(Base):
     pet = Column(String, default=None)
     
     # وقت اللعبة (لنظام الليل والنهار)
-    game_time = Column(Integer, default=0)  # 0-240 (0=فجر, 120=غروب, 240=فجر جديد)
+    game_time = Column(Integer, default=0)  # 0-240
     
     # تاريخ الإنشاء
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -144,6 +144,46 @@ class Player(Base):
     def can_sleep(self):
         return (datetime.utcnow() - self.last_sleep).total_seconds() >= 43200
     
+    # ===== دوال الوقت الجديدة =====
+    def advance_time(self, minutes=5):
+        """تقدم الوقت بمقدار دقائق معينة"""
+        self.game_time = (self.game_time + minutes) % 240
+        return self.get_time_of_day()
+    
+    def get_time_of_day(self):
+        """يحول game_time لوقت مفهوم مع تفاصيل أكثر"""
+        if self.game_time < 20:
+            return "🌅 الفجر"
+        elif self.game_time < 60:
+            return "☀️ الصباح"
+        elif self.game_time < 120:
+            return "🌤️ الظهيرة"
+        elif self.game_time < 140:
+            return "🌅 الغروب"
+        elif self.game_time < 180:
+            return "🌆 المساء"
+        else:
+            return "🌙 الليل"
+    
+    def is_night(self):
+        """هل الوقت ليل؟ (بين 180 و 240)"""
+        return self.game_time >= 180
+    
+    def get_time_emoji(self):
+        """إيموجي حسب الوقت"""
+        if self.game_time < 20:
+            return "🌅"
+        elif self.game_time < 60:
+            return "☀️"
+        elif self.game_time < 120:
+            return "🌤️"
+        elif self.game_time < 140:
+            return "🌅"
+        elif self.game_time < 180:
+            return "🌆"
+        else:
+            return "🌙"
+    
     def add_xp(self, amount):
         self.xp += amount
         while self.xp >= self.level * 10:
@@ -171,21 +211,6 @@ class Player(Base):
             if self.level >= lvl and t not in titles:
                 titles.append(t)
         self.titles = titles
-    
-    def is_night(self):
-        """هل الوقت ليل؟ (بين 120 و 240)"""
-        return 120 <= self.game_time <= 240
-    
-    def get_time_of_day(self):
-        """يحول game_time لوقت مفهوم"""
-        if self.game_time < 60:
-            return "🌅 الفجر"
-        elif self.game_time < 120:
-            return "☀️ النهار"
-        elif self.game_time < 180:
-            return "🌅 الغروب"
-        else:
-            return "🌙 الليل"
 
 
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///mc.db')
