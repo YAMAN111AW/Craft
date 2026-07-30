@@ -60,9 +60,65 @@ def update_time_and_check_events(player):
     
     return time_of_day, events
 
+# ===== أمر اختبار لإضافة عناصر =====
+@bot.message_handler(commands=['additem'])
+def add_item_cmd(msg):
+    """أمر لإضافة عنصر للمخزون (للاختبار)"""
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    
+    if len(args) < 3:
+        return bot.send_message(msg.chat.id, "استخدم: /additem اسم_العنصر العدد\nمثال: /additem oak_wood 5")
+    
+    item_name = args[1]
+    try:
+        amount = int(args[2])
+    except:
+        return bot.send_message(msg.chat.id, "❌ العدد يجب أن يكون رقماً")
+    
+    success = p.add_item(item_name, amount)
+    session.commit()
+    
+    if success:
+        bot.send_message(msg.chat.id, f"✅ تم إضافة {amount} من {item_name}!")
+    else:
+        bot.send_message(msg.chat.id, f"❌ فشل في إضافة {item_name} (المخزون ممتلئ)")
+
+# ===== أمر لعرض المخزون بشكل مفصل =====
+@bot.message_handler(commands=['debug_inv'])
+def debug_inv(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    
+    # جلب المخزون مباشرة من قاعدة البيانات
+    session.refresh(p)
+    
+    txt = f"🔍 مخزون {p.username}:\n"
+    txt += f"inventory type: {type(p.inventory)}\n"
+    
+    inv = p.get_inv()
+    
+    # عد العناصر
+    items = []
+    for i in range(36):
+        slot = inv.get(f"slot_{i}")
+        if slot:
+            items.append((i, slot))
+    
+    txt += f"عدد العناصر: {len(items)}\n\n"
+    
+    if items:
+        for idx, slot in items[:10]:
+            txt += f"خانة {idx+1}: {slot['name']} x{slot['amount']}\n"
+    else:
+        txt += "📭 المخزون فارغ"
+    
+    bot.send_message(msg.chat.id, txt)
+
 @bot.message_handler(commands=['start'])
 def start(msg):
     p, new = get_player(session, msg.from_user.id, msg.from_user.first_name)
+    session.commit()
+    
     if new:
         txt = "🌟 أهلاً بك في عالم ماينكرافت!\n\nاستخدم الأزرار للتنقل."
     else:
@@ -78,6 +134,7 @@ def area_menu(msg):
     
     # تحديث الوقت
     time_of_day, events = update_time_and_check_events(p)
+    session.commit()
     
     if p.level < area.level_req:
         return bot.send_message(msg.chat.id, f"❌ تحتاج مستوى {area.level_req}")
@@ -95,7 +152,7 @@ def area_menu(msg):
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     
-    if area.trees and not is_night:  # لا أشجار في الليل
+    if area.trees and not is_night:
         tree = WorldData.roll_tree(area)
         txt += f"🌳 {tree.name} ({tree.total_blocks} مكعبات)\n"
         kb.add(types.InlineKeyboardButton(f"🪓 كسر {tree.name}", callback_data=f"chop_{area_name}"))
@@ -105,7 +162,7 @@ def area_menu(msg):
         txt += f"🪨 {rock.name} ({rock.total_blocks} مكعبات)\n"
         kb.add(types.InlineKeyboardButton(f"⛏️ كسر {rock.name}", callback_data=f"mine_{area_name}"))
     
-    if area.animals and not is_night:  # لا حيوانات في الليل
+    if area.animals and not is_night:
         animal = WorldData.roll_animal(area)
         if animal:
             txt += f"\n{animal.emoji} {animal.name}\n"
@@ -128,12 +185,14 @@ def start_chopping(call):
     
     # تحديث الوقت
     update_time_and_check_events(p)
+    session.commit()
     
     if p.is_night():
         return bot.answer_callback_query(call.id, "🌙 لا يمكنك قطع الأشجار في الليل!")
     
     tree = WorldData.roll_tree(area)
     result = gm.start_chopping(p, tree)
+    session.commit()
     
     chop_sessions[call.from_user.id] = {"tree": tree, "blocks_left": tree.total_blocks}
     
@@ -193,9 +252,11 @@ def start_mining(call):
     
     # تحديث الوقت
     update_time_and_check_events(p)
+    session.commit()
     
     rock = WorldData.roll_rock(area)
     result = gm.start_mining(p, rock)
+    session.commit()
     
     mine_sessions[call.from_user.id] = {"rock": rock, "blocks_left": rock.total_blocks}
     
@@ -254,11 +315,14 @@ def hunt_animal(call):
     
     # تحديث الوقت
     update_time_and_check_events(p)
+    session.commit()
     
     if p.is_night():
         return bot.answer_callback_query(call.id, "🌙 الحيوانات نائمة في الليل!")
     
     result = gm.hunt_animal(p, animal_name)
+    session.commit()
+    
     if "error" in result:
         return bot.answer_callback_query(call.id, result["error"])
     
@@ -274,6 +338,7 @@ def quick_explore(call):
     # تحديث الوقت
     time_of_day, events = update_time_and_check_events(p)
     is_night = p.is_night()
+    session.commit()
     
     # تحقق من الأحداث أولاً
     for event in events:
@@ -326,11 +391,11 @@ def quick_explore(call):
         # استكشاف سريع - موارد
         possible_loot = ["apple", "bread", "coal", "iron_ore", "gold_ore", "diamond"]
         if is_night:
-            possible_loot = ["coal", "iron_ore", "gold_ore", "diamond"]  # موارد أفضل في الليل
+            possible_loot = ["coal", "iron_ore", "gold_ore", "diamond"]
         r = random.choice(possible_loot)
         amt = random.randint(1, 2 + p.luck // 10)
         if is_night:
-            amt += 1  # موارد أكثر في الليل
+            amt += 1
         p.add_item(r, amt)
         
         xp_reward = 2
@@ -356,6 +421,7 @@ def battle_action(call):
     # تحديث الوقت
     time_of_day = gm.update_game_time(p)
     battle_data['is_night'] = p.is_night()
+    session.commit()
     
     # تنفيذ الإجراء
     if action == 'attack':
@@ -366,7 +432,6 @@ def battle_action(call):
         success, battle_data = battle_system.use_heal(p, battle_data)
         if not success:
             bot.answer_callback_query(call.id, "❌ ليس لديك جرعة شفاء!")
-            # نعرض القتال مرة أخرى
     elif action == 'run':
         success, battle_data = battle_system.try_escape(p, battle_data)
         if success:
@@ -442,12 +507,12 @@ def go_back(call):
     area = call.data.split("_")[1]
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"👋 ارجع للأزرار الرئيسية واختار المنطقة")
 
-# ===== باقي الدوال (نفسها لكن مع تحديث الوقت) =====
-
+# ===== القرية =====
 @bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
 def village(msg):
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_check_events(p)
+    session.commit()
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -464,6 +529,7 @@ def village_actions(call):
     
     if call.data == "v_sleep":
         res = gm.sleep(p)
+        session.commit()
         if "error" in res:
             bot.answer_callback_query(call.id, res["error"])
         else:
@@ -488,15 +554,28 @@ def village_actions(call):
         txt = f"🛒 متجر 🛒\n🕐 {p.get_time_of_day()}\n\n/buy تفاح = 2 خشب\n/buy لحم = 1 حديد"
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
+# ===== مخزوني (المعدل) =====
 @bot.message_handler(func=lambda m: m.text == "🎒 مخزوني")
 def inventory(msg):
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_check_events(p)
     
+    # تحديث الكائن من قاعدة البيانات
+    session.refresh(p)
+    
     inv = p.get_inv()
-    items = [(i, s) for i, s in enumerate(inv.values()) if s]
+    
+    # طباعة للتصحيح في الكونسول
+    print(f"🔍 مخزون {p.username}: {inv}")
+    
+    items = []
+    for i in range(36):
+        slot = inv.get(f"slot_{i}")
+        if slot:
+            items.append((i, slot))
+    
     if not items:
-        return bot.send_message(msg.chat.id, "📭 المخزون فارغ")
+        return bot.send_message(msg.chat.id, f"📭 المخزون فارغ\n\n🕐 {p.get_time_of_day()}")
     
     txt = f"🎒 مخزونك:\n🕐 {p.get_time_of_day()}\n\n"
     for idx, slot in items[:18]:
@@ -510,6 +589,8 @@ def inventory(msg):
 @bot.message_handler(func=lambda m: m.text == "🗑️ حذف")
 def delete_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
+    session.refresh(p)
+    
     inv = p.get_inv()
     items = [(i, s) for i, s in enumerate(inv.values()) if s]
     if not items:
@@ -535,6 +616,7 @@ def delete_item(call):
 def craft_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_check_events(p)
+    session.commit()
     
     recipes = CraftingSystem.get_recipes(p)
     kb = types.InlineKeyboardMarkup(row_width=1)
@@ -556,6 +638,7 @@ def do_craft(call):
 def eat_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_check_events(p)
+    session.refresh(p)
     
     inv = p.get_inv()
     food_list = ["apple","bread","cooked_beef","tropical_fruit","honey","golden_apple","milk","egg","raw_beef","raw_chicken"]
@@ -574,6 +657,7 @@ def do_eat(call):
     p, _ = get_player(session, call.from_user.id)
     food = call.data[4:]
     res = gm.eat(p, food)
+    session.commit()
     if "error" in res:
         bot.answer_callback_query(call.id, res["error"])
     else:
@@ -586,6 +670,7 @@ def do_eat(call):
 def status(msg):
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_check_events(p)
+    session.refresh(p)
     
     titles = p.titles if isinstance(p.titles, list) else []
     tod = p.get_time_of_day()
@@ -595,6 +680,8 @@ def status(msg):
 @bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
 def skills(msg):
     p, _ = get_player(session, msg.from_user.id)
+    session.refresh(p)
+    
     txt = f"⚔️ قوة: {p.strength} | 💨 سرعة: {p.speed}\n💪 تحمل: {p.endurance} | 🍀 حظ: {p.luck}\n🎯 نقاط: {p.skill_points}"
     if p.skill_points > 0:
         kb = types.InlineKeyboardMarkup(row_width=2)
