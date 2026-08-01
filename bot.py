@@ -260,7 +260,6 @@ class Player(Base):
     game_time = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    # جديد: تتبع المعابد
     temples_visited = Column(Integer, default=0)
     temple_cooldown = Column(DateTime, default=datetime.utcnow)
     
@@ -401,13 +400,69 @@ class Player(Base):
 # 2. إعداد قاعدة البيانات
 # ===============================
 
-DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///mc.db')
-if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+def get_database_url():
+    url = os.getenv('DATABASE_URL')
+    
+    if not url:
+        print("ℹ️ لم يتم العثور على DATABASE_URL، استخدام SQLite")
+        return 'sqlite:///mc.db'
+    
+    if url.startswith('postgres://'):
+        url = url.replace('postgres://', 'postgresql://', 1)
+    
+    # إصلاح رابط Railway
+    if 'postgresql' in url and '@:/' in url:
+        print("⚠️ تم اكتشاف رابط ناقص، جاري الإصلاح...")
+        pguser = os.getenv('PGUSER', 'postgres')
+        pgpassword = os.getenv('PGPASSWORD', '')
+        pghost = os.getenv('PGHOST', 'postgres.railway.internal')
+        pgport = os.getenv('PGPORT', '5432')
+        pgdatabase = os.getenv('PGDATABASE', 'railway')
+        
+        if pgpassword:
+            url = f"postgresql://{pguser}:{pgpassword}@{pghost}:{pgport}/{pgdatabase}"
+            print(f"✅ تم إصلاح الرابط")
+        else:
+            # استخراج كلمة المرور من الرابط القديم
+            parts = url.split('@')
+            if len(parts) == 2:
+                credentials = parts[0].replace('postgresql://', '')
+                db_part = parts[1].split('/')
+                if len(db_part) >= 2:
+                    db_name = db_part[1]
+                    url = f"postgresql://{credentials}@{pghost}:{pgport}/{db_name}"
+                    print(f"✅ تم إصلاح الرابط")
+    
+    return url
 
-engine = create_engine(DATABASE_URL, pool_size=5, max_overflow=10, pool_pre_ping=True)
-Base.metadata.create_all(engine)
-Session = sessionmaker(bind=engine)
+DATABASE_URL = get_database_url()
+
+try:
+    if 'sqlite' in DATABASE_URL:
+        engine = create_engine(
+            DATABASE_URL, 
+            connect_args={'check_same_thread': False}
+        )
+    else:
+        engine = create_engine(
+            DATABASE_URL, 
+            pool_size=5, 
+            max_overflow=10, 
+            pool_pre_ping=True
+        )
+    
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    print(f"✅ قاعدة بيانات متصلة بنجاح")
+    
+except Exception as e:
+    print(f"❌ خطأ في الاتصال بقاعدة البيانات: {e}")
+    print("⚠️ التبديل إلى SQLite")
+    DATABASE_URL = 'sqlite:///mc.db'
+    engine = create_engine(DATABASE_URL, connect_args={'check_same_thread': False})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    print("✅ قاعدة بيانات SQLite جاهزة")
 
 def get_player(session, user_id, username=None):
     player = session.query(Player).filter_by(user_id=user_id).first()
@@ -419,7 +474,7 @@ def get_player(session, user_id, username=None):
     return player, False
 
 # ===============================
-# 3. بيانات العالم (معدلة)
+# 3. بيانات العالم
 # ===============================
 
 class WorldData:
@@ -487,7 +542,6 @@ class WorldData:
     
     @staticmethod
     def get_temple_events():
-        """أحداث المعبد العشوائية"""
         return {
             "puzzles": [
                 {"q": "ما هو الشيء الذي يمشي بلا أرجل ويطير بلا أجنحة؟", "a": "الوقت", "reward": "apple", "amount": 5},
@@ -509,7 +563,7 @@ class WorldData:
         }
 
 # ===============================
-# 4. نظام التصنيع
+# 4. نظام التصنيع (معدل)
 # ===============================
 
 class CraftingSystem:
@@ -525,26 +579,38 @@ class CraftingSystem:
             {"name": "سيف خشبي", "emoji": "🗡️", "in": {"wooden_planks": 2, "sticks": 1}, "out": {"wooden_sword": 1}, "xp": 3},
             {"name": "سياج", "emoji": "🚧", "in": {"sticks": 6}, "out": {"fence": 3}, "xp": 1},
             {"name": "باب خشبي", "emoji": "🚪", "in": {"wooden_planks": 6}, "out": {"wooden_door": 1}, "xp": 2},
+            {"name": "خوذة خشبية", "emoji": "🪖", "in": {"wooden_planks": 5}, "out": {"wooden_helmet": 1}, "xp": 3},
+            {"name": "صدرية خشبية", "emoji": "👕", "in": {"wooden_planks": 8}, "out": {"wooden_chestplate": 1}, "xp": 4},
         ],
         "level_3": [
             {"name": "فأس حجري", "emoji": "🪓", "in": {"stone": 3, "sticks": 2}, "out": {"stone_axe": 1}, "xp": 5},
             {"name": "سيف حجري", "emoji": "🗡️", "in": {"stone": 2, "sticks": 1}, "out": {"stone_sword": 1}, "xp": 5},
-            {"name": "معول حديدي", "emoji": "⛏️", "in": {"iron_ore": 3, "sticks": 2}, "out": {"iron_pickaxe": 1}, "xp": 7},
-            {"name": "درع حديدي", "emoji": "🛡️", "in": {"iron_ore": 8}, "out": {"iron_chestplate": 1}, "xp": 8},
+            {"name": "معول حجري", "emoji": "⛏️", "in": {"stone": 3, "sticks": 2}, "out": {"stone_pickaxe": 1}, "xp": 5},
+            {"name": "خوذة حجرية", "emoji": "🪖", "in": {"stone": 5}, "out": {"stone_helmet": 1}, "xp": 5},
+            {"name": "صدرية حجرية", "emoji": "👕", "in": {"stone": 8}, "out": {"stone_chestplate": 1}, "xp": 6},
             {"name": "خبز", "emoji": "🍞", "in": {"wheat": 3}, "out": {"bread": 1}, "xp": 2},
         ],
         "level_4": [
+            {"name": "معول حديدي", "emoji": "⛏️", "in": {"iron_ore": 3, "sticks": 2}, "out": {"iron_pickaxe": 1}, "xp": 7},
             {"name": "سيف حديدي", "emoji": "🗡️", "in": {"iron_ore": 2, "sticks": 1}, "out": {"iron_sword": 1}, "xp": 8},
-            {"name": "فأس ألماسي", "emoji": "🪓", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_axe": 1}, "xp": 12},
-            {"name": "جرعة شفاء", "emoji": "🧪", "in": {"sap": 2, "mushroom": 1}, "out": {"healing_potion": 1}, "xp": 8},
+            {"name": "خوذة حديدية", "emoji": "🪖", "in": {"iron_ore": 5}, "out": {"iron_helmet": 1}, "xp": 8},
+            {"name": "صدرية حديدية", "emoji": "👕", "in": {"iron_ore": 8}, "out": {"iron_chestplate": 1}, "xp": 10},
+            {"name": "بنطلون حديدي", "emoji": "👖", "in": {"iron_ore": 7}, "out": {"iron_leggings": 1}, "xp": 9},
+            {"name": "حذاء حديدي", "emoji": "👢", "in": {"iron_ore": 4}, "out": {"iron_boots": 1}, "xp": 7},
             {"name": "قوس", "emoji": "🏹", "in": {"sticks": 3, "spider_silk": 3}, "out": {"bow": 1}, "xp": 4},
+            {"name": "جرعة شفاء", "emoji": "🧪", "in": {"sap": 2, "mushroom": 1}, "out": {"healing_potion": 1}, "xp": 8},
         ],
         "level_5": [
+            {"name": "فأس ألماسي", "emoji": "🪓", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_axe": 1}, "xp": 12},
             {"name": "سيف ألماسي", "emoji": "🗡️", "in": {"diamond": 2, "sticks": 1}, "out": {"diamond_sword": 1}, "xp": 15},
             {"name": "درع ناري", "emoji": "🔥", "in": {"fiery_coal": 5, "iron_ore": 8}, "out": {"fire_chestplate": 1}, "xp": 18},
             {"name": "عين الإندر", "emoji": "👁️", "in": {"ender_pearl": 1, "blaze_rod": 1}, "out": {"eye_of_ender": 1}, "xp": 10},
             {"name": "جناح طيران", "emoji": "🪽", "in": {"diamond": 1, "feather": 10}, "out": {"elytra": 1}, "xp": 25},
             {"name": "تفاح ذهبي", "emoji": "🍎", "in": {"apple": 1, "gold_ore": 8}, "out": {"golden_apple": 1}, "xp": 15},
+            {"name": "خوذة ألماسية", "emoji": "🪖", "in": {"diamond": 5}, "out": {"diamond_helmet": 1}, "xp": 15},
+            {"name": "صدرية ألماسية", "emoji": "👕", "in": {"diamond": 8}, "out": {"diamond_chestplate": 1}, "xp": 18},
+            {"name": "بنطلون ألماسي", "emoji": "👖", "in": {"diamond": 7}, "out": {"diamond_leggings": 1}, "xp": 16},
+            {"name": "حذاء ألماسي", "emoji": "👢", "in": {"diamond": 4}, "out": {"diamond_boots": 1}, "xp": 14},
         ]
     }
     
@@ -554,14 +620,18 @@ class CraftingSystem:
         recipes = player.recipes_unlocked
         if isinstance(recipes, str):
             recipes = json.loads(recipes)
-        if player.has_item("crafting_table"):
-            if "base" not in recipes:
-                recipes.append("base")
-            if player.level >= 2 and "level_2" not in recipes:
-                recipes.append("level_2")
-        if player.has_item("furnace"):
-            if "level_3" not in recipes:
-                recipes.append("level_3")
+        
+        if "base" not in recipes:
+            recipes.append("base")
+        if player.level >= 2 and "level_2" not in recipes:
+            recipes.append("level_2")
+        if player.level >= 5 and "level_3" not in recipes:
+            recipes.append("level_3")
+        if player.level >= 10 and "level_4" not in recipes:
+            recipes.append("level_4")
+        if player.level >= 15 and "level_5" not in recipes:
+            recipes.append("level_5")
+        
         for level in recipes:
             if level in cls.RECIPES:
                 all_recipes.extend(cls.RECIPES[level])
@@ -580,7 +650,7 @@ class CraftingSystem:
         return True, f"✅ تم تصنيع {recipe['name']}! +{recipe['xp']}XP"
 
 # ===============================
-# 5. نظام اللعبة (معدل)
+# 5. نظام اللعبة
 # ===============================
 
 class GameMechanics:
@@ -634,16 +704,33 @@ class GameMechanics:
         sparkles = "✨" if percentage > 0.5 else ""
         return f"\n   {sparkles}\n   {state}\n   {'⛏️' if percentage < 0.9 else '✅'}\n"
     
-    def chop_block(self, player, tree):
-        """تقطيع الخشب - مسموح باليد"""
-        rewards = []
-        
-        # استخراج الموارد (مع تعديل: مسموح باليد)
-        resource_multiplier = max(0.4, 1 - (player.level * 0.01))
-        
-        # تحقق من وجود فأس لزيادة الغنائم
+    def get_break_time(self, player, base_time):
+        """حساب وقت التكسير حسب الأداة والمستوى"""
         eq = player.get_equip()
-        has_axe = eq.get("weapon") in ["wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe"]
+        weapon = eq.get("weapon")
+        
+        tool_speed = {
+            "wooden_axe": 0.8,
+            "stone_axe": 0.6,
+            "stone_pickaxe": 0.6,
+            "iron_pickaxe": 0.4,
+            "diamond_axe": 0.3,
+            "diamond_sword": 0.5,
+            "iron_sword": 0.7,
+        }
+        
+        speed = tool_speed.get(weapon, 1.0)
+        level_bonus = max(0.7, 1 - (player.level * 0.015))
+        
+        final_time = base_time * speed * level_bonus
+        return max(0.5, final_time)
+    
+    def chop_block(self, player, tree):
+        eq = player.get_equip()
+        has_axe = eq.get("weapon") in ["wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe", "diamond_sword"]
+        
+        rewards = []
+        resource_multiplier = max(0.4, 1 - (player.level * 0.01))
         bonus_multiplier = 1.5 if has_axe else 1
         
         for res, amt in tree["resources"]:
@@ -655,7 +742,6 @@ class GameMechanics:
         
         if tree.get("rare"):
             rare_res, rare_amt, prob = tree["rare"]
-            # زيادة فرصة الحصول على العناصر النادرة مع الفأس
             if has_axe:
                 prob = min(0.5, prob * 1.5)
             if random.random() < prob:
@@ -664,7 +750,7 @@ class GameMechanics:
         
         hunger_cost = 1.5 if player.is_night() else 1
         if has_axe:
-            hunger_cost *= 0.8  # أقل جوع بالفأس
+            hunger_cost *= 0.8
         player.current_hunger = max(0, player.current_hunger - hunger_cost)
         
         if random.random() < 0.08 and not has_axe:
@@ -689,9 +775,8 @@ class GameMechanics:
         }
     
     def mine_block(self, player, rock):
-        """تكسير الحجارة - يحتاج معول"""
         eq = player.get_equip()
-        has_pickaxe = eq.get("weapon") in ["stone_axe", "iron_pickaxe", "diamond_axe"]
+        has_pickaxe = eq.get("weapon") in ["stone_axe", "stone_pickaxe", "iron_pickaxe", "diamond_axe"]
         
         if not has_pickaxe:
             return {
@@ -785,6 +870,8 @@ class GameMechanics:
                 if "diamond" in str(armor): defense += 4
                 elif "iron" in str(armor): defense += 3
                 elif "fire" in str(armor): defense += 5
+                elif "stone" in str(armor): defense += 2
+                elif "wooden" in str(armor): defense += 1
         if player.is_night():
             defense = int(defense * 0.8)
         return defense
@@ -977,7 +1064,7 @@ class BattleSystem:
         return None, battle_data
 
 # ===============================
-# 7. نظام المعبد (جديد)
+# 7. نظام المعبد
 # ===============================
 
 class TempleSystem:
@@ -985,8 +1072,6 @@ class TempleSystem:
         self.session = session
     
     def enter_temple(self, player):
-        """دخول المعبد"""
-        # التحقق من الكول داون
         if player.temple_cooldown and (datetime.utcnow() - player.temple_cooldown).total_seconds() < 3600:
             remaining = int(3600 - (datetime.utcnow() - player.temple_cooldown).total_seconds())
             return False, f"⏳ المعبد مغلق! انتظر {remaining//60} دقيقة"
@@ -994,20 +1079,17 @@ class TempleSystem:
         events = WorldData.get_temple_events()
         choice = random.random()
         
-        if choice < 0.3:  # 30% لغز
+        if choice < 0.3:
             puzzle = random.choice(events["puzzles"])
             return "puzzle", puzzle
-        
-        elif choice < 0.6:  # 30% وحش
+        elif choice < 0.6:
             monster = random.choice(events["monsters"])
             return "monster", monster
-        
-        else:  # 40% كنز
+        else:
             treasure = random.choice(events["treasures"])
             return "treasure", treasure
     
     def solve_puzzle(self, player, puzzle, answer):
-        """حل اللغز"""
         if answer.lower().strip() == puzzle["a"].lower():
             player.add_item(puzzle["reward"], puzzle["amount"])
             player.add_xp(10)
@@ -1016,14 +1098,12 @@ class TempleSystem:
             self.session.commit()
             return True, f"✅ إجابة صحيحة! حصلت على {puzzle['reward']} x{puzzle['amount']} +10XP"
         else:
-            # عقاب للإجابة الخاطئة
             damage = random.randint(3, 8)
             player.current_health = max(0, player.current_health - damage)
             self.session.commit()
             return False, f"❌ إجابة خاطئة! تأذيت بـ {damage} ضرر"
     
     def get_temple_reward(self, player, treasure):
-        """مكافأة المعبد"""
         player.add_item(treasure["item"], treasure["amount"])
         player.add_xp(15)
         player.temples_visited += 1
@@ -1032,7 +1112,237 @@ class TempleSystem:
         return f"🎁 وجدت كنزاً! {treasure['item']} x{treasure['amount']} +15XP"
 
 # ===============================
-# 8. البوت
+# 8. نظام الإندر والتنين
+# ===============================
+
+class EnderDragonSystem:
+    def __init__(self, session):
+        self.session = session
+        self.dragon_active = False
+        self.dragon_hp = 0
+        self.dragon_max_hp = 100
+        self.fighters = {}
+        self.dragon_spawn_time = None
+    
+    def can_fight_dragon(self, player):
+        if player.level < 20:
+            return False, "❌ تحتاج مستوى 20 لمواجهة التنين!"
+        if not player.has_item("eye_of_ender", 3):
+            return False, "❌ تحتاج 3 عيون إندر لفتح البوابة!"
+        if not player.has_item("diamond_sword"):
+            return False, "❌ تحتاج سيف ألماسي لمواجهة التنين!"
+        if not player.has_item("bow"):
+            return False, "❌ تحتاج قوس لمواجهة التنين!"
+        if player.defeated_ender_dragon:
+            return False, "✅ لقد هزمت التنين بالفعل!"
+        return True, "✅ جاهز لمواجهة التنين!"
+    
+    def start_dragon_fight(self, player):
+        can, msg = self.can_fight_dragon(player)
+        if not can:
+            return False, msg
+        
+        player.remove_item("eye_of_ender", 3)
+        
+        self.dragon_active = True
+        self.dragon_hp = self.dragon_max_hp
+        self.dragon_spawn_time = datetime.utcnow()
+        self.fighters[player.user_id] = {
+            "damage_dealt": 0,
+            "joined_at": datetime.utcnow()
+        }
+        
+        self.session.commit()
+        
+        return True, f"""🐉 تنين الإندر يظهر!
+
+❤️ الصحة: {self.dragon_hp}/{self.dragon_max_hp}
+⚔️ استخدم /dragon_attack للهجوم
+🛡️ استخدم /dragon_defend للدفاع
+🏃 استخدم /dragon_run للهروب
+
+⚠️ التنين قوي جداً! تأكد من تجهيزاتك!"""
+    
+    def dragon_attack(self, player):
+        if not self.dragon_active:
+            return False, "❌ لا يوجد تنين للقتال!"
+        if self.dragon_hp <= 0:
+            return False, "❌ التنين هزم بالفعل!"
+        
+        base_damage = 5 + player.strength
+        weapon_damage = {
+            "diamond_sword": 16,
+            "iron_sword": 12,
+            "stone_sword": 8,
+            "wooden_sword": 5
+        }
+        eq = player.get_equip()
+        weapon = eq.get('weapon')
+        base_damage += weapon_damage.get(weapon, 0)
+        
+        if weapon == "bow":
+            base_damage += 4
+            if player.has_item("arrow", 1):
+                player.remove_item("arrow", 1)
+                base_damage += 3
+        
+        if random.random() < 0.2 + (player.luck / 100):
+            base_damage *= 2
+            player.add_xp(5)
+        
+        if player.is_night():
+            base_damage = int(base_damage * 0.7)
+        
+        self.dragon_hp = max(0, self.dragon_hp - base_damage)
+        
+        if player.user_id in self.fighters:
+            self.fighters[player.user_id]["damage_dealt"] += base_damage
+        
+        dragon_damage = random.randint(8, 20)
+        if random.random() < 0.3:
+            dragon_damage *= 1.5
+            player.current_health = max(0, player.current_health - dragon_damage)
+            msg = f"💢 التنين هاجمك بـ {dragon_damage} ضرر!"
+        else:
+            player.current_health = max(0, player.current_health - dragon_damage//2)
+            msg = f"💢 التنين أصابك بـ {dragon_damage//2} ضرر!"
+        
+        self.session.commit()
+        
+        if self.dragon_hp <= 0:
+            return self.dragon_defeated(player)
+        
+        return True, f"""⚔️ ضربت التنين بـ {base_damage} ضرر!
+{msg}
+
+❤️ التنين: {self.dragon_hp}/{self.dragon_max_hp}
+❤️ صحتك: {player.current_health}/{player.max_health}"""
+    
+    def dragon_defeated(self, player):
+        self.dragon_active = False
+        player.defeated_ender_dragon = True
+        player.add_xp(100)
+        player.level += 2
+        
+        rewards = [
+            ("diamond", 10),
+            ("gold_ore", 20),
+            ("ender_pearl", 5),
+            ("dragon_head", 1),
+            ("dragon_egg", 1)
+        ]
+        
+        rewards_text = []
+        for item, amt in rewards:
+            player.add_item(item, amt)
+            rewards_text.append(f"{item} x{amt}")
+        
+        titles = player.titles
+        if isinstance(titles, str):
+            titles = json.loads(titles)
+        if "قاتل التنين" not in titles:
+            titles.append("قاتل التنين")
+        player.titles = titles
+        
+        self.session.commit()
+        
+        return True, f"""🎉 **لقد هزمت التنين!**
+
+⭐ +100 XP
+⬆️ +2 مستويات
+
+🎁 المكافآت:
+{', '.join(rewards_text)}
+
+🏅 لقب جديد: قاتل التنين
+
+تهانينا! أنت بطل ماينكرافت! 🏆"""
+    
+    def get_dragon_status(self):
+        if not self.dragon_active:
+            return "🐉 التنين في سبات عميق..."
+        return f"""🐉 **معركة التنين مستمرة!**
+
+❤️ صحة التنين: {self.dragon_hp}/{self.dragon_max_hp}
+👥 المقاتلون: {len(self.fighters)}
+⏳ الوقت: {int((datetime.utcnow() - self.dragon_spawn_time).total_seconds() / 60)} دقيقة"""
+
+# ===============================
+# 9. نظام النذر
+# ===============================
+
+class NetherSystem:
+    NETHER_ITEMS = {
+        "nether_wart": {"name": "نتي وارت", "emoji": "🌿", "rarity": "common"},
+        "blaze_rod": {"name": "عصا البلاز", "emoji": "🔥", "rarity": "uncommon"},
+        "ghast_tear": {"name": "دمعة الغاست", "emoji": "💧", "rarity": "rare"},
+        "magma_cream": {"name": "كريم الماجما", "emoji": "🟠", "rarity": "uncommon"},
+        "netherite_scrap": {"name": "خردة النذريت", "emoji": "⚫", "rarity": "epic"},
+        "gold_ore": {"name": "ذهب خام", "emoji": "✨", "rarity": "common"},
+        "soul_sand": {"name": "رمل الروح", "emoji": "🟤", "rarity": "common"},
+        "nether_brick": {"name": "طوب الجحيم", "emoji": "🧱", "rarity": "common"},
+    }
+    
+    NETHER_MOBS = [
+        {"name": "بلاز", "emoji": "🔥", "hp": 20, "damage": 10, "xp": 15, "drops": [("blaze_rod", 2, 0.6)]},
+        {"name": "غاست", "emoji": "👻", "hp": 25, "damage": 15, "xp": 20, "drops": [("ghast_tear", 1, 0.3)]},
+        {"name": "بيغ زومبي", "emoji": "🧟", "hp": 30, "damage": 12, "xp": 18, "drops": [("gold_ore", 3, 0.5)]},
+        {"name": "سكلتون الجحيم", "emoji": "💀", "hp": 22, "damage": 14, "xp": 16, "drops": [("nether_brick", 4, 0.7)]},
+        {"name": "ماغما كيوب", "emoji": "🟠", "hp": 18, "damage": 8, "xp": 12, "drops": [("magma_cream", 2, 0.5)]},
+    ]
+    
+    def __init__(self, session):
+        self.session = session
+    
+    def enter_nether(self, player):
+        if player.level < 10:
+            return False, "❌ تحتاج مستوى 10 لدخول النذر!"
+        if not player.has_item("eye_of_ender", 1):
+            return False, "❌ تحتاج عين إندر لفتح بوابة النذر!"
+        player.remove_item("eye_of_ender", 1)
+        return True, "🔥 دخلت النذر! عالم الجحيم الخطير..."
+    
+    def explore_nether(self, player):
+        events = []
+        
+        if random.random() < 0.4:
+            mob = random.choice(self.NETHER_MOBS)
+            events.append({
+                'type': 'enemy',
+                'data': mob,
+                'msg': f"⚠️ {mob['emoji']} {mob['name']} يهاجمك!"
+            })
+        
+        if random.random() < 0.3:
+            item = random.choice(list(self.NETHER_ITEMS.values()))
+            amt = random.randint(1, 3 + player.luck//10)
+            player.add_item(item['name'], amt)
+            events.append({
+                'type': 'loot',
+                'msg': f"🎁 وجدت {item['emoji']} {item['name']} x{amt}!"
+            })
+        
+        if random.random() < 0.2:
+            damage = random.randint(3, 8)
+            player.current_health = max(0, player.current_health - damage)
+            events.append({
+                'type': 'damage',
+                'msg': f"🌋 سقطت في الحمم! -{damage} صحة"
+            })
+        
+        if random.random() < 0.1:
+            if random.random() < 0.2:
+                player.add_item("netherite_scrap", 1)
+                events.append({
+                    'type': 'loot',
+                    'msg': "💎 وجدت خردة نذريت نادرة!"
+                })
+        
+        self.session.commit()
+        return events
+
+# ===============================
+# 10. البوت
 # ===============================
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1045,12 +1355,15 @@ gm = GameMechanics(session)
 battle_system = BattleSystem(session)
 building_system = BuildingSystem(session)
 temple_system = TempleSystem(session)
+ender_dragon = EnderDragonSystem(session)
+nether = NetherSystem(session)
 
 # جلسات العمل
 chop_sessions = {}
 mine_sessions = {}
 battle_sessions = {}
 temple_sessions = {}
+village_quests = {}
 
 def menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -1059,6 +1372,7 @@ def menu():
     kb.add("🛠️ التصنيع", "🏠 بناء")
     kb.add("🍖 أكل", "🗑️ حذف")
     kb.add("❤️ حالتي", "📊 مهاراتي")
+    kb.add("🔥 النذر", "🐉 التنين")
     kb.add("🔙 رجوع")
     return kb
 
@@ -1111,16 +1425,107 @@ def add_item_cmd(msg):
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {item}!")
 
-@bot.message_handler(commands=['debug_inv'])
-def debug_inv(msg):
+# ===== أوامر التنين =====
+
+@bot.message_handler(commands=['dragon'])
+def dragon_cmd(msg):
     p, _ = get_player(session, msg.from_user.id)
-    session.refresh(p)
-    inv = p.get_inv()
-    items = [s for s in inv.values() if s]
-    txt = f"🔍 عدد العناصر: {len(items)}\n"
-    for s in items[:10]:
-        txt += f"- {s['name']} x{s['amount']}\n"
-    bot.send_message(msg.chat.id, txt or "📭 المخزون فارغ")
+    status = ender_dragon.get_dragon_status()
+    can, msg_text = ender_dragon.can_fight_dragon(p)
+    
+    kb = types.InlineKeyboardMarkup()
+    if can:
+        kb.add(types.InlineKeyboardButton("🐉 قتال التنين!", callback_data="dragon_fight"))
+    
+    bot.send_message(msg.chat.id, f"{status}\n\n{msg_text}", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_fight")
+def dragon_fight(call):
+    p, _ = get_player(session, call.from_user.id)
+    success, msg = ender_dragon.start_dragon_fight(p)
+    if success:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("⚔️ هجوم", callback_data="dragon_attack"),
+            types.InlineKeyboardButton("🛡️ دفاع", callback_data="dragon_defend")
+        )
+        kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="dragon_run"))
+        edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
+    else:
+        bot.answer_callback_query(call.id, msg)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("dragon_"))
+def dragon_action(call):
+    p, _ = get_player(session, call.from_user.id)
+    action = call.data[7:]
+    
+    if action == "attack":
+        success, msg = ender_dragon.dragon_attack(p)
+    elif action == "defend":
+        # دفاع ضد التنين
+        p.current_health = min(p.max_health, p.current_health + 5)
+        session.commit()
+        msg = f"🛡️ استعديت للدفاع! +5 صحة"
+        success = True
+    elif action == "run":
+        msg = "🏃 هربت من التنين!"
+        success = True
+        ender_dragon.dragon_active = False
+    
+    if success:
+        if "هزم" in msg or "انتصار" in msg:
+            edit_msg(bot, call.message.chat.id, call.message.message_id, msg)
+        else:
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            kb.add(
+                types.InlineKeyboardButton("⚔️ هجوم", callback_data="dragon_attack"),
+                types.InlineKeyboardButton("🛡️ دفاع", callback_data="dragon_defend")
+            )
+            kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="dragon_run"))
+            edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
+    else:
+        bot.answer_callback_query(call.id, msg)
+
+# ===== أوامر النذر =====
+
+@bot.message_handler(func=lambda m: m.text == "🔥 النذر")
+def nether_menu(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("🚪 دخول النذر", callback_data="nether_enter"),
+        types.InlineKeyboardButton("🔍 استكشاف النذر", callback_data="nether_explore")
+    )
+    
+    bot.send_message(msg.chat.id, f"🔥 **النذر - عالم الجحيم**\n\n⚠️ منطقة خطيرة جداً!\n📍 المستوى المطلوب: 10\n💀 أعداء أقوياء ومكافآت نادرة", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "nether_enter")
+def nether_enter(call):
+    p, _ = get_player(session, call.from_user.id)
+    success, msg = nether.enter_nether(p)
+    bot.answer_callback_query(call.id, msg)
+
+@bot.callback_query_handler(func=lambda c: c.data == "nether_explore")
+def nether_explore(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    if p.level < 10:
+        return bot.answer_callback_query(call.id, "❌ تحتاج مستوى 10!")
+    
+    events = nether.explore_nether(p)
+    session.commit()
+    
+    txt = "🔥 **استكشاف النذر...**\n\n"
+    for event in events:
+        txt += f"{event['msg']}\n"
+    
+    txt += f"\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20"
+    
+    if not events:
+        txt += "🌋 لا شيء يحدث... النذر هادئ اليوم"
+    
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 # ===== منطقة الغابة والكهف =====
 
@@ -1138,27 +1543,25 @@ def area_menu(msg):
     kb = types.InlineKeyboardMarkup(row_width=2)
     
     if is_forest:
-        # أشجار للقطع
         trees = WorldData.get_trees()
         for tree in random.sample(trees, min(2, len(trees))):
-            txt += f"🌳 {tree['name']} ({tree['blocks']} مكعبات) ⏱️{tree['break_time']}ث\n"
+            break_time = gm.get_break_time(p, tree['break_time'])
+            txt += f"🌳 {tree['name']} ({tree['blocks']} مكعبات) ⏱️{break_time:.1f}ث\n"
             kb.add(types.InlineKeyboardButton(f"🪓 {tree['name']}", callback_data=f"chop_{tree['name']}"))
         
-        # حيوانات للصيد (نهاراً فقط)
         if not is_night:
             animals = list(WorldData.get_animals().keys())
             for animal in random.sample(animals, min(2, len(animals))):
                 kb.add(types.InlineKeyboardButton(f"🏹 {animal}", callback_data=f"hunt_{animal}"))
         
-        # احتمالية ظهور المعبد أثناء الاستكشاف
         if random.random() < 0.15 and not is_night:
             kb.add(types.InlineKeyboardButton("🏛️ معبد قديم!", callback_data="temple_enter"))
     
     if not is_forest:
-        # حجارة للتكسير
         rocks = WorldData.get_rocks()
         for rock in random.sample(rocks, min(2, len(rocks))):
-            txt += f"🪨 {rock['name']} ({rock['blocks']} مكعبات) ⏱️{rock['break_time']}ث\n"
+            break_time = gm.get_break_time(p, rock['break_time'])
+            txt += f"🪨 {rock['name']} ({rock['blocks']} مكعبات) ⏱️{break_time:.1f}ث\n"
             kb.add(types.InlineKeyboardButton(f"⛏️ {rock['name']}", callback_data=f"mine_{rock['name']}"))
     
     kb.add(types.InlineKeyboardButton("🔍 استكشاف", callback_data=f"explore_{'forest' if is_forest else 'cave'}"))
@@ -1168,7 +1571,7 @@ def area_menu(msg):
     
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
 
-# ===== تقطيع الأشجار (معدل) =====
+# ===== تقطيع الأشجار =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("chop_"))
 def start_chop(call):
@@ -1183,13 +1586,12 @@ def start_chop(call):
     if not tree:
         return bot.answer_callback_query(call.id, "❌ شجرة غير موجودة")
     
-    # وقت التكسير حسب نوع الشجرة
-    break_time = tree.get('break_time', 2)
+    break_time = gm.get_break_time(p, tree['break_time'])
     
     chop_sessions[call.from_user.id] = {"tree": tree, "blocks": tree['blocks'], "break_time": break_time}
     
     animation = gm.get_tree_animation(tree['blocks'], tree['blocks'])
-    txt = f"🪓 {tree['name']}\nمتبقي: {tree['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time} ثانية لكل مكعب\n\nاضغط اكسر!"
+    txt = f"🪓 {tree['name']}\nمتبقي: {tree['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🪓 اكسر!", callback_data="do_chop"))
     kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
@@ -1206,7 +1608,7 @@ def do_chop(call):
     tree = data["tree"]
     break_time = data.get("break_time", 2)
     
-    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... انتظر {break_time} ثانية", show_alert=True)
+    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... {break_time:.1f} ثانية", show_alert=True)
     time.sleep(break_time)
     
     data["blocks"] -= 1
@@ -1216,11 +1618,6 @@ def do_chop(call):
     
     if result.get("dead"):
         edit_msg(bot, call.message.chat.id, call.message.message_id, "💀 لقد مت!")
-        del chop_sessions[call.from_user.id]
-        return
-    
-    if result.get("failed"):
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "❌ فشل التكسير!")
         del chop_sessions[call.from_user.id]
         return
     
@@ -1237,7 +1634,7 @@ def do_chop(call):
         kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
-# ===== تكسير الحجارة (معدل) =====
+# ===== تكسير الحجارة =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("mine_"))
 def start_mine(call):
@@ -1245,23 +1642,20 @@ def start_mine(call):
     p, _ = get_player(session, call.from_user.id)
     
     eq = p.get_equip()
-    if eq.get("weapon") not in ["stone_axe", "iron_pickaxe", "diamond_axe"]:
+    if eq.get("weapon") not in ["stone_axe", "stone_pickaxe", "iron_pickaxe", "diamond_axe"]:
         return bot.answer_callback_query(call.id, "❌ تحتاج معول لتكسير الحجر!\nاصنع معولاً أولاً.")
-    
-    if eq.get("weapon") == "wooden_axe":
-        return bot.answer_callback_query(call.id, "❌ الفأس الخشبي لا يكسر الحجر!")
     
     rocks = WorldData.get_rocks()
     rock = next((r for r in rocks if r['name'] == rock_name), None)
     if not rock:
         return bot.answer_callback_query(call.id, "❌ حجر غير موجود")
     
-    break_time = rock.get('break_time', 3)
+    break_time = gm.get_break_time(p, rock['break_time'])
     
     mine_sessions[call.from_user.id] = {"rock": rock, "blocks": rock['blocks'], "break_time": break_time}
     
     animation = gm.get_rock_animation(rock['blocks'], rock['blocks'])
-    txt = f"⛏️ {rock['name']}\nمتبقي: {rock['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time} ثانية لكل مكعب\n\nاضغط اكسر!"
+    txt = f"⛏️ {rock['name']}\nمتبقي: {rock['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("⛏️ اكسر!", callback_data="do_mine"))
     kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
@@ -1278,7 +1672,7 @@ def do_mine(call):
     rock = data["rock"]
     break_time = data.get("break_time", 3)
     
-    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... انتظر {break_time} ثانية", show_alert=True)
+    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... {break_time:.1f} ثانية", show_alert=True)
     time.sleep(break_time)
     
     data["blocks"] -= 1
@@ -1321,8 +1715,9 @@ def hunt(call):
     
     eq = p.get_equip()
     weapon = eq.get("weapon")
-    if weapon not in ["bow", "wooden_sword", "stone_sword", "iron_sword", "diamond_sword"]:
-        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!")
+    
+    if not weapon or weapon not in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
+        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!\nاصنع سيفاً خشبياً أولاً!")
     
     result = gm.hunt_animal(p, animal_name)
     session.commit()
@@ -1333,7 +1728,7 @@ def hunt(call):
     txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
-# ===== نظام المعبد (جديد) =====
+# ===== نظام المعبد =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "temple_enter")
 def enter_temple(call):
@@ -1375,7 +1770,6 @@ def enter_temple(call):
         bot.answer_callback_query(call.id, result)
 
 def solve_temple_puzzle(message, user_id, puzzle):
-    """حل لغز المعبد"""
     p, _ = get_player(session, user_id)
     if message.from_user.id != user_id:
         return
@@ -1396,7 +1790,6 @@ def explore(call):
     time_of_day, events = update_time_and_events(p)
     is_night = p.is_night()
     
-    # احتمالية مواجهة عدو أثناء الاستكشاف
     if random.random() < 0.2:
         enemies = WorldData.get_enemies(is_night)
         if enemies:
@@ -1420,9 +1813,7 @@ def explore(call):
             edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
             return
     
-    # احتمالية العثور على معبد أثناء الاستكشاف (فقط في الغابة)
     if area == "forest" and random.random() < 0.1 and not is_night:
-        # معبد مخفي
         txt = f"🏛️ وجدت معبداً قديماً في الغابة!\n🕐 {time_of_day}\n\nهل تريد الدخول؟"
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🏛️ دخول المعبد", callback_data="temple_enter"))
@@ -1430,8 +1821,7 @@ def explore(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
         return
     
-    # البحث عن موارد (معدلة: موارد منطقية)
-    possible = ["apple", "bread", "coal", "stone", "oak_wood", "feather", "mushroom"]
+    possible = ["apple", "bread", "coal", "stone", "oak_wood", "feather", "mushroom", "wheat"]
     if is_night:
         possible = ["coal", "iron_ore", "rotten_flesh", "bone", "gunpowder"]
     
@@ -1496,7 +1886,9 @@ def battle_action(call):
     
     if status == 'dead':
         del battle_sessions[call.from_user.id]
-        txt = "💀 لقد مت!\n\n" + "\n".join(battle_data['log'][-3:]) + "\n\nاستخدم /start"
+        gm.respawn(p)
+        session.commit()
+        txt = "💀 لقد مت!\n\n" + "\n".join(battle_data['log'][-3:]) + "\n\n🔄 تم إحيائك في الغابة"
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
         return
     
@@ -1664,6 +2056,171 @@ def cancel_build(call):
     else:
         bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
 
+# ===== القرية =====
+
+@bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
+def village(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    update_time_and_events(p)
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("😴 نوم", callback_data="v_sleep"),
+        types.InlineKeyboardButton("📋 مهام", callback_data="v_quests"),
+        types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop"),
+        types.InlineKeyboardButton("🏅 تبادل", callback_data="v_trade"),
+        types.InlineKeyboardButton("⚔️ بطل القرية", callback_data="v_champion")
+    )
+    bot.send_message(msg.chat.id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_quests")
+def village_quests(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    quests = [
+        {"name": "الفلاح", "item": "wheat", "amount": 5, "reward": "bread", "reward_amt": 3, "xp": 10},
+        {"name": "الحداد", "item": "iron_ore", "amount": 3, "reward": "iron_sword", "reward_amt": 1, "xp": 15},
+        {"name": "الصياد", "item": "feather", "amount": 8, "reward": "bow", "reward_amt": 1, "xp": 12},
+        {"name": "المستكشف", "item": "bone", "amount": 6, "reward": "gold_ore", "reward_amt": 3, "xp": 10},
+        {"name": "البناء", "item": "stone", "amount": 10, "reward": "diamond", "reward_amt": 1, "xp": 20},
+        {"name": "الساحر", "item": "sap", "amount": 4, "reward": "healing_potion", "reward_amt": 2, "xp": 15},
+    ]
+    
+    q = random.choice(quests)
+    txt = f"📋 **مهمة جديدة**\n\n"
+    txt += f"👤 {q['name']} يطلب منك:\n"
+    txt += f"📦 {q['item']} x{q['amount']}\n\n"
+    txt += f"🎁 المكافأة: {q['reward']} x{q['reward_amt']}\n"
+    txt += f"⭐ {q['xp']} XP"
+    
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("✅ قبول المهمة", callback_data=f"quest_{quests.index(q)}"))
+    
+    village_quests[call.from_user.id] = q
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("quest_"))
+def accept_quest(call):
+    p, _ = get_player(session, call.from_user.id)
+    idx = int(call.data.split("_")[1])
+    
+    if call.from_user.id not in village_quests:
+        return bot.answer_callback_query(call.id, "❌ لا توجد مهمة نشطة")
+    
+    q = village_quests[call.from_user.id]
+    
+    if p.has_item(q['item'], q['amount']):
+        p.remove_item(q['item'], q['amount'])
+        p.add_item(q['reward'], q['reward_amt'])
+        p.add_xp(q['xp'])
+        session.commit()
+        
+        del village_quests[call.from_user.id]
+        edit_msg(bot, call.message.chat.id, call.message.message_id, f"✅ أكملت المهمة!\n🎁 {q['reward']} x{q['reward_amt']}\n⭐ +{q['xp']}XP")
+    else:
+        bot.answer_callback_query(call.id, f"❌ تحتاج {q['amount']} {q['item']}")
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_shop")
+def village_shop(call):
+    txt = "🛒 **متجر القرية**\n\n"
+    txt += "📦 تفاح = خشب بلوط ×2\n"
+    txt += "📦 لحم = حديد خام ×1\n"
+    txt += "📦 خبز = قمح ×3\n"
+    txt += "📦 سيف حديدي = ألماس ×2\n"
+    txt += "📦 قوس = حديد خام ×4\n\n"
+    txt += "استخدم /buy اسم_العنصر"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_trade")
+def village_trade(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    txt = "🏅 **التبادل مع القرويين**\n\n"
+    txt += "1️⃣ فلاح: 5 قمح → 3 خبز\n"
+    txt += "2️⃣ حداد: 3 حديد → 1 سيف حديدي\n"
+    txt += "3️⃣ صياد: 8 ريش → 1 قوس\n"
+    txt += "4️⃣ تاجر: 2 ألماس → 1 تفاح ذهبي\n\n"
+    txt += "استخدم /trade رقم_الصفقة"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_champion")
+def village_champion(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    if p.level >= 20:
+        txt = "⚔️ **بطل القرية**\n\n"
+        txt += "🏅 أنت بطل القرية!\n"
+        txt += "⭐ مكافأة يومية: 10 XP + 1 ألماس"
+        
+        # مكافأة يومية
+        p.add_xp(10)
+        p.add_item("diamond", 1)
+        session.commit()
+    else:
+        txt = f"⚔️ **بطل القرية**\n\n"
+        txt += f"📊 تحتاج مستوى 20 لتصبح بطلاً\n"
+        txt += f"📈 مستواك الحالي: {p.level}"
+    
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.message_handler(commands=['buy'])
+def buy(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "/buy تفاح أو /buy لحم أو /buy خبز")
+    
+    shop = {
+        "تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
+        "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
+        "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2}
+    }
+    
+    item = args[1]
+    if item not in shop:
+        return bot.send_message(msg.chat.id, "❌ غير متوفر")
+    
+    s = shop[item]
+    if p.has_item(s["price"], s["amt"]):
+        p.remove_item(s["price"], s["amt"])
+        p.add_item(s["give"], s["gamt"])
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ اشتريت {item}!")
+    else:
+        bot.send_message(msg.chat.id, f"❌ تحتاج {s['amt']} {s['price']}")
+
+@bot.message_handler(commands=['trade'])
+def trade(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "/trade 1 - /trade 4")
+    
+    try:
+        trade_num = int(args[1])
+    except:
+        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح")
+    
+    trades = {
+        1: {"name": "فلاح", "in": "wheat", "in_amt": 5, "out": "bread", "out_amt": 3},
+        2: {"name": "حداد", "in": "iron_ore", "in_amt": 3, "out": "iron_sword", "out_amt": 1},
+        3: {"name": "صياد", "in": "feather", "in_amt": 8, "out": "bow", "out_amt": 1},
+        4: {"name": "تاجر", "in": "diamond", "in_amt": 2, "out": "golden_apple", "out_amt": 1},
+    }
+    
+    if trade_num not in trades:
+        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح (1-4)")
+    
+    t = trades[trade_num]
+    if p.has_item(t["in"], t["in_amt"]):
+        p.remove_item(t["in"], t["in_amt"])
+        p.add_item(t["out"], t["out_amt"])
+        p.add_xp(5)
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ تم التبادل مع {t['name']}!\n🎁 {t['out']} x{t['out_amt']} +5XP")
+    else:
+        bot.send_message(msg.chat.id, f"❌ تحتاج {t['in_amt']} {t['in']}")
+
 # ===== المخزون والأكل والحالة =====
 
 @bot.message_handler(func=lambda m: m.text == "🎒 مخزوني")
@@ -1756,7 +2313,8 @@ def status(msg):
     txt += f"🕐 {p.get_time_of_day()}\n"
     txt += f"🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n"
     txt += f"🐺 حيوان: {p.pet or 'لا يوجد'}\n"
-    txt += f"🏛️ معابد: {p.temples_visited or 0}"
+    txt += f"🏛️ معابد: {p.temples_visited or 0}\n"
+    txt += f"🐉 التنين: {'✅ هزمته' if p.defeated_ender_dragon else '❌ لم يهزم'}"
     bot.send_message(msg.chat.id, txt)
 
 @bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
@@ -1794,80 +2352,6 @@ def upgrade_skill(call):
         session.commit()
         bot.answer_callback_query(call.id, f"✅ {sk} +1")
 
-# ===== القرية =====
-
-@bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
-def village(msg):
-    p, _ = get_player(session, msg.from_user.id)
-    update_time_and_events(p)
-    
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("😴 نوم", callback_data="v_sleep"),
-        types.InlineKeyboardButton("📋 مهمة", callback_data="v_quest"),
-        types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop")
-    )
-    bot.send_message(msg.chat.id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}", reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data in ["v_sleep", "v_quest", "v_shop"])
-def village_actions(call):
-    p, _ = get_player(session, call.from_user.id)
-    
-    if call.data == "v_sleep":
-        res = gm.sleep(p)
-        session.commit()
-        if "error" in res:
-            bot.answer_callback_query(call.id, res["error"])
-        else:
-            edit_msg(bot, call.message.chat.id, call.message.message_id, f"😴 {res['msg']}\n❤️ {res['hp']} | 🍖 {res['hunger']}")
-    
-    elif call.data == "v_quest":
-        quests = [
-            ("الفلاح", "milk", 1, "bread", 3),
-            ("الحداد", "iron_ore", 3, "iron_sword", 1),
-            ("الصياد", "feather", 5, "bow", 1),
-            ("المستكشف", "bone", 5, "gold_ore", 2),
-        ]
-        q = random.choice(quests)
-        if p.has_item(q[1], q[2]):
-            p.remove_item(q[1], q[2])
-            p.add_item(q[3], q[4])
-            p.add_xp(5)
-            session.commit()
-            bot.answer_callback_query(call.id, f"✅ {q[0]}! +{q[3]} +5XP")
-        else:
-            bot.answer_callback_query(call.id, f"❌ تحتاج {q[2]} {q[1]}")
-    
-    elif call.data == "v_shop":
-        txt = "🛒 المتجر\n/buy تفاح = 2 خشب\n/buy لحم = 1 حديد\n/buy خبز = 3 قمح"
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-
-@bot.message_handler(commands=['buy'])
-def buy(msg):
-    p, _ = get_player(session, msg.from_user.id)
-    args = msg.text.split()
-    if len(args) < 2:
-        return bot.send_message(msg.chat.id, "/buy تفاح أو /buy لحم أو /buy خبز")
-    
-    shop = {
-        "تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
-        "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
-        "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2}
-    }
-    
-    item = args[1]
-    if item not in shop:
-        return bot.send_message(msg.chat.id, "❌ غير متوفر")
-    
-    s = shop[item]
-    if p.has_item(s["price"], s["amt"]):
-        p.remove_item(s["price"], s["amt"])
-        p.add_item(s["give"], s["gamt"])
-        session.commit()
-        bot.send_message(msg.chat.id, f"✅ اشتريت {item}!")
-    else:
-        bot.send_message(msg.chat.id, f"❌ تحتاج {s['amt']} {s['price']}")
-
 # ===== توقف =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "stop")
@@ -1877,6 +2361,7 @@ def stop(call):
     mine_sessions.pop(uid, None)
     battle_sessions.pop(uid, None)
     temple_sessions.pop(uid, None)
+    village_quests.pop(uid, None)
     if uid in building_system.building_progress:
         del building_system.building_progress[uid]
     edit_msg(bot, call.message.chat.id, call.message.message_id, "👋 تم التوقف")
@@ -1889,7 +2374,7 @@ def go_back(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=menu())
 
 # ===============================
-# 8. رايلوي - منفذ
+# 11. رايلوي - منفذ
 # ===============================
 
 def keep_alive():
@@ -1911,15 +2396,14 @@ def keep_alive():
         print(f"⚠️ Flask error: {e}")
 
 # ===============================
-# 9. تشغيل البوت
+# 12. تشغيل البوت
 # ===============================
 
 if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
-    print("📁 All in one file: bot.py")
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
-    print("✨ New features: Temple system, hand chopping, time-based breaking!")
+    print("✨ New features: Dragon system, Nether system, Armor crafting, Village quests!")
     
     Thread(target=keep_alive, daemon=True).start()
     
