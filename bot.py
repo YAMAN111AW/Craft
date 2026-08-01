@@ -7,7 +7,7 @@ from threading import Thread
 from flask import Flask
 
 # ===============================
-# 0. نظام البناء (نفسه)
+# 0. نظام البناء
 # ===============================
 
 class BuildingSystem:
@@ -212,7 +212,7 @@ class BuildingSystem:
         return True, f"✅ اكتملت {self.BUILDING_STAGES[stages[stage_index]]['name']}!\n\n🏗️ المرحلة التالية: {stage_info['name']}\n⏳ انتظر {stage_info['time']} ثانية"
 
 # ===============================
-# 1. قاعدة البيانات
+# 1. قاعدة البيانات (مُصلحة)
 # ===============================
 
 Base = declarative_base()
@@ -239,7 +239,7 @@ class Player(Base):
     luck = Column(Integer, default=0)
     
     inventory = Column(Text, default=lambda: json.dumps({f"slot_{i}": None for i in range(36)}))
-    equipment = Column(JSON, default=lambda: {
+    equipment = Column(JSON, default={
         "helmet": None, "chestplate": None, "leggings": None, 
         "boots": None, "weapon": None, "shield": None
     })
@@ -278,14 +278,42 @@ class Player(Base):
         self.inventory = json.dumps(inv, ensure_ascii=False)
     
     def get_equip(self):
+        """جلب التجهيزات - ترجع dict دائماً"""
+        if self.equipment is None:
+            return {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
+        
+        # إذا كان dict (من SQLAlchemy)
+        if isinstance(self.equipment, dict):
+            # تأكد من وجود جميع المفاتيح
+            defaults = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
+            for key in defaults:
+                if key not in self.equipment:
+                    self.equipment[key] = None
+            return self.equipment
+        
+        # إذا كان JSON string
         if isinstance(self.equipment, str):
             try:
-                return json.loads(self.equipment)
+                data = json.loads(self.equipment)
+                if isinstance(data, dict):
+                    return data
             except:
-                return {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
-        return self.equipment or {}
+                pass
+        
+        # أي شيء آخر
+        return {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
     
     def save_equip(self, eq):
+        """حفظ التجهيزات"""
+        if not isinstance(eq, dict):
+            eq = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
+        
+        # تأكد من وجود جميع المفاتيح
+        defaults = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
+        for key in defaults:
+            if key not in eq:
+                eq[key] = None
+        
         self.equipment = eq
     
     def has_item(self, item_name, amount=1):
@@ -684,7 +712,7 @@ class CraftingSystem:
         return True, f"🔥 تم صهر {item_name} → {recipe['out']}! +3XP"
 
 # ===============================
-# 5. نظام اللعبة (مُصلح)
+# 5. نظام اللعبة
 # ===============================
 
 class GameMechanics:
@@ -739,11 +767,9 @@ class GameMechanics:
         return f"\n   {sparkles}\n   {state}\n   {'⛏️' if percentage < 0.9 else '✅'}\n"
     
     def get_break_time(self, player, base_time):
-        """حساب وقت التكسير مع مراعاة الأدوات"""
         eq = player.get_equip()
         weapon = eq.get("weapon")
         
-        # تعريف سرعة الأدوات
         tool_speed = {
             "wooden_axe": 0.8,
             "stone_axe": 0.6,
@@ -754,13 +780,8 @@ class GameMechanics:
             "iron_sword": 0.7,
         }
         
-        # السرعة الأساسية
         speed = tool_speed.get(weapon, 1.0)
-        
-        # مكافأة المستوى
         level_bonus = max(0.7, 1 - (player.level * 0.015))
-        
-        # مكافأة القوة
         strength_bonus = max(0.85, 1 - (player.strength * 0.02))
         
         final_time = base_time * speed * level_bonus * strength_bonus
@@ -770,7 +791,6 @@ class GameMechanics:
         eq = player.get_equip()
         weapon = eq.get("weapon")
         
-        # التحقق من وجود فأس أو سيف
         has_axe = weapon in ["wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe", "diamond_sword", "wooden_sword", "stone_sword", "iron_sword"]
         
         rewards = []
@@ -870,11 +890,9 @@ class GameMechanics:
         }
     
     def hunt_animal(self, player, animal_name):
-        # التحقق من وجود سلاح
         eq = player.get_equip()
         weapon = eq.get("weapon")
         
-        # قائمة الأسلحة المسموحة للصيد
         allowed_weapons = ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]
         
         if not weapon or weapon not in allowed_weapons:
@@ -889,7 +907,6 @@ class GameMechanics:
             if random.random() < 0.2:
                 continue
             bonus = random.randint(0, 1) if not player.is_night() else 0
-            # مكافأة إضافية من السيف
             if "sword" in weapon:
                 bonus += 1
             player.add_item(res, amt + bonus)
@@ -986,9 +1003,8 @@ class GameMechanics:
         self.session.commit()
         return {"msg": "😴 نمت جيداً!", "hp": player.current_health, "hunger": player.current_hunger}
 
-
 # ===============================
-# 6. نظام القتال (مُصلح)
+# 6. نظام القتال
 # ===============================
 
 class BattleSystem:
@@ -1043,7 +1059,6 @@ class BattleSystem:
         enemy = battle_data['enemy']
         player_hp = battle_data['player_hp']
         
-        # حساب الدفاع من المعدات
         player_defense = 0
         eq = player.get_equip()
         for slot in ["helmet", "chestplate", "leggings", "boots"]:
@@ -1147,16 +1162,14 @@ class BattleSystem:
         return None, battle_data
 
 # ===============================
-# 7. نظام المعبد (مُصلح بالكامل)
+# 7. نظام المعبد
 # ===============================
 
 class TempleSystem:
     def __init__(self, session):
         self.session = session
-        self.puzzle_answers = {}
     
     def enter_temple(self, player):
-        # التحقق من الكول داون
         if player.temple_cooldown and (datetime.utcnow() - player.temple_cooldown).total_seconds() < 3600:
             remaining = int(3600 - (datetime.utcnow() - player.temple_cooldown).total_seconds())
             return False, f"⏳ المعبد مغلق! انتظر {remaining//60} دقيقة"
@@ -1197,7 +1210,7 @@ class TempleSystem:
         return f"🎁 وجدت كنزاً! {treasure['item']} x{treasure['amount']} +15XP"
 
 # ===============================
-# 8. نظام التنين (مُصلح)
+# 8. نظام التنين
 # ===============================
 
 class EnderDragonSystem:
@@ -1428,7 +1441,7 @@ class NetherSystem:
         return events
 
 # ===============================
-# 10. البوت (مُصلح بالكامل)
+# 10. البوت (النسخة النهائية المُصلحة)
 # ===============================
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1514,7 +1527,7 @@ def add_item_cmd(msg):
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {item}!")
 
-# ===== أمر تجهيز السلاح (مُصلح بالكامل) =====
+# ===== أمر تجهيز السلاح (المُصلح النهائي) =====
 
 @bot.message_handler(commands=['equip'])
 def equip_item(msg):
@@ -1526,7 +1539,6 @@ def equip_item(msg):
     
     item_name = args[1]
     
-    # قائمة كل الأدوات المسموحة
     tools = [
         "wooden_sword", "stone_sword", "iron_sword", "diamond_sword",
         "bow",
@@ -1541,47 +1553,55 @@ def equip_item(msg):
     if item_name not in tools:
         return bot.send_message(msg.chat.id, f"❌ {item_name} غير معروف")
     
-    if not p.has_item(item_name):
+    if not p.has_item(item_name, 1):
         return bot.send_message(msg.chat.id, f"❌ ليس لديك {item_name}!\nاستخدم /additem {item_name} 1")
     
     eq = p.get_equip()
     
-    # تحديد نوع الأداة لتجهيزها في المكان الصحيح
+    # حفظ السلاح القديم (إن وجد)
+    old_weapon = eq.get("weapon")
+    
     if "sword" in item_name or "axe" in item_name or "pickaxe" in item_name or item_name == "bow":
         eq["weapon"] = item_name
         p.remove_item(item_name, 1)
+        if old_weapon:
+            p.add_item(old_weapon, 1)
     elif "helmet" in item_name:
-        # إذا كان هناك خوذة قديمة، نعيدها للمخزون
-        if eq.get("helmet"):
-            p.add_item(eq["helmet"], 1)
+        old = eq.get("helmet")
         eq["helmet"] = item_name
         p.remove_item(item_name, 1)
+        if old:
+            p.add_item(old, 1)
     elif "chestplate" in item_name:
-        if eq.get("chestplate"):
-            p.add_item(eq["chestplate"], 1)
+        old = eq.get("chestplate")
         eq["chestplate"] = item_name
         p.remove_item(item_name, 1)
+        if old:
+            p.add_item(old, 1)
     elif "leggings" in item_name:
-        if eq.get("leggings"):
-            p.add_item(eq["leggings"], 1)
+        old = eq.get("leggings")
         eq["leggings"] = item_name
         p.remove_item(item_name, 1)
+        if old:
+            p.add_item(old, 1)
     elif "boots" in item_name:
-        if eq.get("boots"):
-            p.add_item(eq["boots"], 1)
+        old = eq.get("boots")
         eq["boots"] = item_name
         p.remove_item(item_name, 1)
+        if old:
+            p.add_item(old, 1)
     
     p.save_equip(eq)
     session.commit()
     
-    # إظهار التجهيزات الحالية
+    # عرض التجهيزات بعد التأكد
+    eq2 = p.get_equip()
     txt = f"✅ تم تجهيز {item_name}!\n\nالتجهيزات الحالية:\n"
-    txt += f"⚔️ السلاح: {eq.get('weapon') or 'لا يوجد'}\n"
-    txt += f"🪖 الخوذة: {eq.get('helmet') or 'لا يوجد'}\n"
-    txt += f"👕 الصدرية: {eq.get('chestplate') or 'لا يوجد'}\n"
-    txt += f"👖 البنطلون: {eq.get('leggings') or 'لا يوجد'}\n"
-    txt += f"👢 الحذاء: {eq.get('boots') or 'لا يوجد'}"
+    txt += f"⚔️ السلاح: {eq2.get('weapon') or 'لا يوجد'}\n"
+    txt += f"🪖 الخوذة: {eq2.get('helmet') or 'لا يوجد'}\n"
+    txt += f"👕 الصدرية: {eq2.get('chestplate') or 'لا يوجد'}\n"
+    txt += f"👖 البنطلون: {eq2.get('leggings') or 'لا يوجد'}\n"
+    txt += f"👢 الحذاء: {eq2.get('boots') or 'لا يوجد'}"
     
     bot.send_message(msg.chat.id, txt)
 
@@ -1618,7 +1638,7 @@ def furnace_smelt(call):
     session.commit()
     bot.answer_callback_query(call.id, msg)
 
-# ===== أوامر التنين (مُصلحة) =====
+# ===== أوامر التنين =====
 
 @bot.message_handler(func=lambda m: m.text == "🐉 التنين")
 def dragon_menu(msg):
@@ -1903,7 +1923,7 @@ def do_mine(call):
         kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
-# ===== صيد الحيوانات (مُصلح) =====
+# ===== صيد الحيوانات =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
 def hunt(call):
@@ -1913,7 +1933,6 @@ def hunt(call):
     if p.is_night():
         return bot.answer_callback_query(call.id, "🌙 الحيوانات نائمة في الليل!")
     
-    # التحقق من السلاح
     eq = p.get_equip()
     weapon = eq.get("weapon")
     
@@ -1929,7 +1948,7 @@ def hunt(call):
     txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
-# ===== نظام المعبد (مُصلح بالكامل) =====
+# ===== نظام المعبد =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "temple_enter")
 def enter_temple(call):
@@ -1944,7 +1963,6 @@ def enter_temple(call):
         puzzle = result[1]
         txt = f"🏛️ معبد غامض!\n\n📜 **{puzzle['q']}**\n\nاختر الإجابة:"
         
-        # إجابات مقترحة
         answers = [puzzle['a'], "الضوء", "الماء", "الرياح", "التراب", "السماء"]
         answers = list(set(answers))
         random.shuffle(answers)
@@ -2186,7 +2204,6 @@ def furnace_smelt_callback(call):
     session.commit()
     bot.answer_callback_query(call.id, msg)
     
-    # تحديث قائمة الفرن
     furnace_menu(call)
 
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_craft")
@@ -2321,7 +2338,7 @@ def cancel_build(call):
     else:
         bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
 
-# ===== القرية (مُصلحة) =====
+# ===== القرية =====
 
 @bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
 def village(msg):
@@ -2337,8 +2354,6 @@ def village(msg):
         types.InlineKeyboardButton("⚔️ بطل القرية", callback_data="v_champion")
     )
     bot.send_message(msg.chat.id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", reply_markup=kb)
-
-# ===== مهام القرية (مُصلحة) =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_sleep")
 def village_sleep(call):
@@ -2426,8 +2441,6 @@ def village_shop(call):
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_trade")
 def village_trade(call):
-    p, _ = get_player(session, call.from_user.id)
-    
     txt = "🏅 **التبادل مع القرويين**\n\n"
     txt += "1️⃣ فلاح: 5 قمح → 3 خبز\n"
     txt += "2️⃣ حداد: 3 حديد → 1 سيف حديدي\n"
@@ -2696,9 +2709,7 @@ def keep_alive():
 
 # ===============================
 # 12. تشغيل البوت
-# ===============================
-
-if __name__ == "__main__":
+# ===============================if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
