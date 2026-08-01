@@ -1425,6 +1425,31 @@ def add_item_cmd(msg):
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {item}!")
 
+@bot.message_handler(commands=['equip'])
+def equip_item(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "❌ استخدم: /equip اسم_السلاح\nمثال: /equip wooden_sword")
+    
+    item_name = args[1]
+    weapons = ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow", "wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe"]
+    
+    if item_name not in weapons:
+        return bot.send_message(msg.chat.id, f"❌ {item_name} ليس سلاحاً معروفاً")
+    
+    if not p.has_item(item_name):
+        return bot.send_message(msg.chat.id, f"❌ ليس لديك {item_name} في المخزون")
+    
+    eq = p.get_equip()
+    eq["weapon"] = item_name
+    p.save_equip(eq)
+    p.remove_item(item_name)
+    
+    session.commit()
+    bot.send_message(msg.chat.id, f"✅ تم تجهيز {item_name}!")
+
 # ===== أوامر التنين =====
 
 @bot.message_handler(commands=['dragon'])
