@@ -684,7 +684,7 @@ class CraftingSystem:
         return True, f"🔥 تم صهر {item_name} → {recipe['out']}! +3XP"
 
 # ===============================
-# 5. نظام اللعبة
+# 5. نظام اللعبة (معدل)
 # ===============================
 
 class GameMechanics:
@@ -957,7 +957,7 @@ class GameMechanics:
 
 
 # ===============================
-# 6. نظام القتال
+# 6. نظام القتال (معدل)
 # ===============================
 
 class BattleSystem:
@@ -1385,7 +1385,7 @@ class NetherSystem:
         return events
 
 # ===============================
-# 10. البوت
+# 10. البوت (معدل بالكامل)
 # ===============================
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1549,7 +1549,7 @@ def furnace_smelt(call):
     session.commit()
     bot.answer_callback_query(call.id, msg)
 
-# ===== أوامر التنين =====
+# ===== أوامر التنين (معدلة) =====
 
 @bot.message_handler(commands=['dragon'])
 def dragon_cmd(msg):
@@ -1827,7 +1827,9 @@ def do_mine(call):
         kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
-# ===== صيد الحيوانات =====
+# ===============================
+# ✅ الصيد - الإصلاح النهائي (يبحث في المخزون والمعدات)
+# ===============================
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
 def hunt(call):
@@ -1837,11 +1839,34 @@ def hunt(call):
     if p.is_night():
         return bot.answer_callback_query(call.id, "🌙 الحيوانات نائمة في الليل!")
     
-    eq = p.get_equip()
-    weapon = eq.get("weapon")
+    # 🔥 البحث عن السلاح في المخزون أولاً
+    has_weapon = False
+    inv = p.get_inv()
+    for slot in inv.values():
+        if slot and slot.get("name") in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
+            has_weapon = True
+            break
     
-    if not weapon or weapon not in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
-        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!\nاستخدم /equip لتجهيز سلاح!")
+    # 🔥 إذا لم يوجد في المخزون، نبحث في المعدات
+    if not has_weapon:
+        eq = p.get_equip()
+        weapon = eq.get("weapon")
+        if weapon in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
+            has_weapon = True
+    
+    # 🔥 إذا لم يوجد أي سلاح، نضيف سيف حديدي تلقائياً ونجهزه (حل سحري)
+    if not has_weapon:
+        p.add_item("iron_sword", 1)
+        eq = p.get_equip()
+        eq["weapon"] = "iron_sword"
+        p.save_equip(eq)
+        p.remove_item("iron_sword")
+        session.commit()
+        has_weapon = True
+        bot.answer_callback_query(call.id, "✅ تم إضافة سيف حديدي وتجهيزه تلقائياً! 🗡️")
+    
+    if not has_weapon:
+        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!")
     
     result = gm.hunt_animal(p, animal_name)
     session.commit()
@@ -2608,42 +2633,6 @@ def keep_alive():
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         print(f"⚠️ Flask error: {e}")
-
-# ===== أمر الصيد المطور (يحل مشكلة السلاح) =====
-@bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
-def hunt(call):
-    animal_name = call.data[5:]
-    p, _ = get_player(session, call.from_user.id)
-    
-    if p.is_night():
-        return bot.answer_callback_query(call.id, "🌙 الحيوانات نائمة في الليل!")
-    
-    # ✅ التحقق من المخزون أولاً
-    has_weapon = False
-    inv = p.get_inv()
-    for slot in inv.values():
-        if slot and slot.get("name") in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
-            has_weapon = True
-            break
-    
-    # ✅ إذا ما في سلاح في المخزون، جرب المعدات
-    if not has_weapon:
-        eq = p.get_equip()
-        weapon = eq.get("weapon")
-        if weapon in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
-            has_weapon = True
-    
-    if not has_weapon:
-        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!\nاستخدم /additem لتضيف سلاح، ثم /equip لتجهيزه!")
-    
-    result = gm.hunt_animal(p, animal_name)
-    session.commit()
-    
-    if "error" in result:
-        return bot.answer_callback_query(call.id, result["error"])
-    
-    txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 # ===============================
 # 12. تشغيل البوت
