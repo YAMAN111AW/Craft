@@ -2609,6 +2609,42 @@ def keep_alive():
     except Exception as e:
         print(f"⚠️ Flask error: {e}")
 
+# ===== أمر الصيد المطور (يحل مشكلة السلاح) =====
+@bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
+def hunt(call):
+    animal_name = call.data[5:]
+    p, _ = get_player(session, call.from_user.id)
+    
+    if p.is_night():
+        return bot.answer_callback_query(call.id, "🌙 الحيوانات نائمة في الليل!")
+    
+    # ✅ التحقق من المخزون أولاً
+    has_weapon = False
+    inv = p.get_inv()
+    for slot in inv.values():
+        if slot and slot.get("name") in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
+            has_weapon = True
+            break
+    
+    # ✅ إذا ما في سلاح في المخزون، جرب المعدات
+    if not has_weapon:
+        eq = p.get_equip()
+        weapon = eq.get("weapon")
+        if weapon in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
+            has_weapon = True
+    
+    if not has_weapon:
+        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!\nاستخدم /additem لتضيف سلاح، ثم /equip لتجهيزه!")
+    
+    result = gm.hunt_animal(p, animal_name)
+    session.commit()
+    
+    if "error" in result:
+        return bot.answer_callback_query(call.id, result["error"])
+    
+    txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
 # ===============================
 # 12. تشغيل البوت
 # ===============================
