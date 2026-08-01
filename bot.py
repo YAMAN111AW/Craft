@@ -6,12 +6,10 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from threading import Thread
 
 # ===============================
-# 0. نظام البناء (مستورد)
+# 0. نظام البناء
 # ===============================
 
 class BuildingSystem:
-    """نظام بناء البيوت في ماينكرافت"""
-    
     BUILDING_STAGES = {
         "foundation": {
             "name": "🏗️ الأساس",
@@ -410,7 +408,6 @@ def get_database_url():
     if url.startswith('postgres://'):
         url = url.replace('postgres://', 'postgresql://', 1)
     
-    # إصلاح رابط Railway
     if 'postgresql' in url and '@:/' in url:
         print("⚠️ تم اكتشاف رابط ناقص، جاري الإصلاح...")
         pguser = os.getenv('PGUSER', 'postgres')
@@ -423,7 +420,6 @@ def get_database_url():
             url = f"postgresql://{pguser}:{pgpassword}@{pghost}:{pgport}/{pgdatabase}"
             print(f"✅ تم إصلاح الرابط")
         else:
-            # استخراج كلمة المرور من الرابط القديم
             parts = url.split('@')
             if len(parts) == 2:
                 credentials = parts[0].replace('postgresql://', '')
@@ -563,7 +559,7 @@ class WorldData:
         }
 
 # ===============================
-# 4. نظام التصنيع (معدل)
+# 4. نظام التصنيع (معدل مع الفرن)
 # ===============================
 
 class CraftingSystem:
@@ -614,6 +610,17 @@ class CraftingSystem:
         ]
     }
     
+    # وصفات الفرن (صهر المعادن)
+    FURNACE_RECIPES = {
+        "iron_ore": {"out": "iron_ingot", "time": 5, "fuel": "coal", "fuel_amt": 1},
+        "gold_ore": {"out": "gold_ingot", "time": 5, "fuel": "coal", "fuel_amt": 1},
+        "stone": {"out": "smooth_stone", "time": 3, "fuel": "coal", "fuel_amt": 1},
+        "raw_beef": {"out": "cooked_beef", "time": 3, "fuel": "coal", "fuel_amt": 1},
+        "raw_chicken": {"out": "cooked_chicken", "time": 3, "fuel": "coal", "fuel_amt": 1},
+        "raw_pork": {"out": "cooked_pork", "time": 3, "fuel": "coal", "fuel_amt": 1},
+        "raw_mutton": {"out": "cooked_mutton", "time": 3, "fuel": "coal", "fuel_amt": 1},
+    }
+    
     @classmethod
     def get_recipes(cls, player):
         all_recipes = []
@@ -648,6 +655,33 @@ class CraftingSystem:
             player.add_item(item, amt)
         player.add_xp(recipe["xp"])
         return True, f"✅ تم تصنيع {recipe['name']}! +{recipe['xp']}XP"
+    
+    @classmethod
+    def furnace_smelt(cls, player, item_name):
+        """صهر العنصر في الفرن"""
+        if item_name not in cls.FURNACE_RECIPES:
+            return False, "❌ هذا العنصر لا يمكن صهره"
+        
+        if not player.has_item("furnace"):
+            return False, "❌ تحتاج فرن للصهر!"
+        
+        recipe = cls.FURNACE_RECIPES[item_name]
+        
+        if not player.has_item(item_name):
+            return False, f"❌ ليس لديك {item_name}"
+        
+        if not player.has_item(recipe["fuel"], recipe["fuel_amt"]):
+            return False, f"❌ تحتاج {recipe['fuel']} x{recipe['fuel_amt']} كوقود"
+        
+        # استهلاك المواد
+        player.remove_item(item_name, 1)
+        player.remove_item(recipe["fuel"], recipe["fuel_amt"])
+        
+        # إضافة الناتج
+        player.add_item(recipe["out"], 1)
+        player.add_xp(3)
+        
+        return True, f"🔥 تم صهر {item_name} → {recipe['out']}! +3XP"
 
 # ===============================
 # 5. نظام اللعبة
@@ -705,7 +739,6 @@ class GameMechanics:
         return f"\n   {sparkles}\n   {state}\n   {'⛏️' if percentage < 0.9 else '✅'}\n"
     
     def get_break_time(self, player, base_time):
-        """حساب وقت التكسير حسب الأداة والمستوى"""
         eq = player.get_equip()
         weapon = eq.get("weapon")
         
@@ -727,7 +760,8 @@ class GameMechanics:
     
     def chop_block(self, player, tree):
         eq = player.get_equip()
-        has_axe = eq.get("weapon") in ["wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe", "diamond_sword"]
+        weapon = eq.get("weapon")
+        has_axe = weapon in ["wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe", "diamond_sword"]
         
         rewards = []
         resource_multiplier = max(0.4, 1 - (player.level * 0.01))
@@ -776,7 +810,8 @@ class GameMechanics:
     
     def mine_block(self, player, rock):
         eq = player.get_equip()
-        has_pickaxe = eq.get("weapon") in ["stone_axe", "stone_pickaxe", "iron_pickaxe", "diamond_axe"]
+        weapon = eq.get("weapon")
+        has_pickaxe = weapon in ["stone_axe", "stone_pickaxe", "iron_pickaxe", "diamond_axe"]
         
         if not has_pickaxe:
             return {
@@ -888,7 +923,7 @@ class GameMechanics:
         food_db = {
             "apple": 4, "bread": 5, "cooked_beef": 8, "tropical_fruit": 8,
             "honey": 6, "golden_apple": 8, "milk": 3, "egg": 1,
-            "raw_beef": 2, "raw_chicken": 1
+            "raw_beef": 2, "raw_chicken": 1, "cooked_chicken": 6, "cooked_pork": 7, "cooked_mutton": 6
         }
         if food not in food_db:
             return {"error": "طعام غير معروف"}
@@ -1064,12 +1099,13 @@ class BattleSystem:
         return None, battle_data
 
 # ===============================
-# 7. نظام المعبد
+# 7. نظام المعبد (بالأزرار)
 # ===============================
 
 class TempleSystem:
     def __init__(self, session):
         self.session = session
+        self.puzzle_answers = {}
     
     def enter_temple(self, player):
         if player.temple_cooldown and (datetime.utcnow() - player.temple_cooldown).total_seconds() < 3600:
@@ -1364,6 +1400,7 @@ mine_sessions = {}
 battle_sessions = {}
 temple_sessions = {}
 village_quests = {}
+temple_puzzle_answers = {}
 
 def menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -1425,6 +1462,8 @@ def add_item_cmd(msg):
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {item}!")
 
+# ===== أمر تجهيز السلاح =====
+
 @bot.message_handler(commands=['equip'])
 def equip_item(msg):
     p, _ = get_player(session, msg.from_user.id)
@@ -1449,6 +1488,36 @@ def equip_item(msg):
     
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم تجهيز {item_name}!")
+
+# ===== أمر الفرن =====
+
+@bot.message_handler(commands=['furnace'])
+def furnace_cmd(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    
+    if not p.has_item("furnace"):
+        return bot.send_message(msg.chat.id, "❌ ليس لديك فرن!\nاصنع واحداً أولاً (حجر ×8)")
+    
+    txt = "🔥 **الفرن**\n\nاختر ما تريد صهره:\n"
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for item in CraftingSystem.FURNACE_RECIPES:
+        if p.has_item(item):
+            kb.add(types.InlineKeyboardButton(f"🔄 {item}", callback_data=f"furnace_{item}"))
+    
+    if not any(p.has_item(item) for item in CraftingSystem.FURNACE_RECIPES):
+        txt += "\n📭 ليس لديك مواد قابلة للصهر"
+    
+    bot.send_message(msg.chat.id, txt, reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("furnace_"))
+def furnace_smelt(call):
+    p, _ = get_player(session, call.from_user.id)
+    item_name = call.data[8:]
+    
+    success, msg = CraftingSystem.furnace_smelt(p, item_name)
+    session.commit()
+    bot.answer_callback_query(call.id, msg)
 
 # ===== أوامر التنين =====
 
@@ -1487,7 +1556,6 @@ def dragon_action(call):
     if action == "attack":
         success, msg = ender_dragon.dragon_attack(p)
     elif action == "defend":
-        # دفاع ضد التنين
         p.current_health = min(p.max_health, p.current_health + 5)
         session.commit()
         msg = f"🛡️ استعديت للدفاع! +5 صحة"
@@ -1667,8 +1735,9 @@ def start_mine(call):
     p, _ = get_player(session, call.from_user.id)
     
     eq = p.get_equip()
-    if eq.get("weapon") not in ["stone_axe", "stone_pickaxe", "iron_pickaxe", "diamond_axe"]:
-        return bot.answer_callback_query(call.id, "❌ تحتاج معول لتكسير الحجر!\nاصنع معولاً أولاً.")
+    weapon = eq.get("weapon")
+    if weapon not in ["stone_axe", "stone_pickaxe", "iron_pickaxe", "diamond_axe"]:
+        return bot.answer_callback_query(call.id, "❌ تحتاج معول لتكسير الحجر!\nاستخدم /equip stone_pickaxe")
     
     rocks = WorldData.get_rocks()
     rock = next((r for r in rocks if r['name'] == rock_name), None)
@@ -1742,7 +1811,7 @@ def hunt(call):
     weapon = eq.get("weapon")
     
     if not weapon or weapon not in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
-        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!\nاصنع سيفاً خشبياً أولاً!")
+        return bot.answer_callback_query(call.id, "❌ تحتاج سيف أو قوس للصيد!\nاستخدم /equip لتجهيز سلاح!")
     
     result = gm.hunt_animal(p, animal_name)
     session.commit()
@@ -1753,7 +1822,7 @@ def hunt(call):
     txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
-# ===== نظام المعبد =====
+# ===== نظام المعبد (بالأزرار) =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "temple_enter")
 def enter_temple(call):
@@ -1762,10 +1831,22 @@ def enter_temple(call):
     result, data = temple_system.enter_temple(p)
     
     if result == "puzzle":
-        temple_sessions[call.from_user.id] = {"type": "puzzle", "data": data}
-        txt = f"🏛️ معبد غامض!\n\n📜 لغز: {data['q']}\n\nأجب بإرسال الإجابة في الشات"
-        bot.send_message(call.message.chat.id, txt)
-        bot.register_next_step_handler(call.message, solve_temple_puzzle, call.from_user.id, data)
+        puzzle = data
+        txt = f"🏛️ معبد غامض!\n\n📜 **{puzzle['q']}**\n\nاختر الإجابة:"
+        
+        # إجابات مقترحة (بما فيها الإجابة الصحيحة وإجابات خاطئة)
+        answers = [puzzle['a'], "الضوء", "الماء", "الرياح", "التراب", "السماء"]
+        answers = list(set(answers))  # إزالة التكرار
+        random.shuffle(answers)
+        answers = answers[:4]  # اختيار 4 إجابات فقط
+        
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        for ans in answers:
+            kb.add(types.InlineKeyboardButton(f"📝 {ans}", callback_data=f"temple_answer_{ans}"))
+        
+        # حفظ اللغز للمستخدم
+        temple_puzzle_answers[call.from_user.id] = puzzle
+        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
     
     elif result == "monster":
         monster = data
@@ -1794,16 +1875,22 @@ def enter_temple(call):
     else:
         bot.answer_callback_query(call.id, result)
 
-def solve_temple_puzzle(message, user_id, puzzle):
-    p, _ = get_player(session, user_id)
-    if message.from_user.id != user_id:
-        return
+@bot.callback_query_handler(func=lambda c: c.data.startswith("temple_answer_"))
+def temple_answer(call):
+    p, _ = get_player(session, call.from_user.id)
+    answer = call.data[14:]  # بعد "temple_answer_"
     
-    success, msg = temple_system.solve_puzzle(p, puzzle, message.text)
-    bot.send_message(message.chat.id, msg)
+    if call.from_user.id not in temple_puzzle_answers:
+        return bot.answer_callback_query(call.id, "❌ انتهت جلسة المعبد")
     
-    if user_id in temple_sessions:
-        del temple_sessions[user_id]
+    puzzle = temple_puzzle_answers[call.from_user.id]
+    
+    success, msg = temple_system.solve_puzzle(p, puzzle, answer)
+    session.commit()
+    
+    del temple_puzzle_answers[call.from_user.id]
+    bot.answer_callback_query(call.id, msg)
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ **نتيجة اللغز**\n\n{msg}")
 
 # ===== استكشاف =====
 
@@ -1944,14 +2031,63 @@ def craft_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
     recipes = CraftingSystem.get_recipes(p)
     
-    if not recipes:
-        return bot.send_message(msg.chat.id, "📭 لا توجد وصفات متاحة\n\nاصنع طاولة تصنيع أولاً!")
-    
     kb = types.InlineKeyboardMarkup(row_width=1)
-    for i, r in enumerate(recipes[:20]):
-        kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"craft_{i}"))
     
-    bot.send_message(msg.chat.id, f"🛠️ التصنيع\n🕐 {p.get_time_of_day()}", reply_markup=kb)
+    # أزرار التصنيع العادي
+    txt = "🛠️ **التصنيع**\n🕐 {}\n\n".format(p.get_time_of_day())
+    
+    if recipes:
+        for i, r in enumerate(recipes[:15]):
+            kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"craft_{i}"))
+    else:
+        txt += "📭 لا توجد وصفات متاحة\n\n"
+    
+    # زر الفرن
+    if p.has_item("furnace"):
+        kb.add(types.InlineKeyboardButton("🔥 استخدام الفرن", callback_data="furnace_menu"))
+        txt += "\n🔥 لديك فرن! استخدمه لصهر المعادن."
+    
+    bot.send_message(msg.chat.id, txt, reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "furnace_menu")
+def furnace_menu(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    if not p.has_item("furnace"):
+        return bot.answer_callback_query(call.id, "❌ ليس لديك فرن!")
+    
+    txt = "🔥 **الفرن**\n\nاختر ما تريد صهره:\n"
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    has_items = False
+    for item, recipe in CraftingSystem.FURNACE_RECIPES.items():
+        if p.has_item(item):
+            has_items = True
+            kb.add(types.InlineKeyboardButton(f"🔄 {item} → {recipe['out']}", callback_data=f"furnace_{item}"))
+    
+    if not has_items:
+        txt += "\n📭 ليس لديك مواد قابلة للصهر\n\nالمواد المطلوبة:\n"
+        for item in CraftingSystem.FURNACE_RECIPES:
+            txt += f"- {item}\n"
+    
+    kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_craft"))
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("furnace_"))
+def furnace_smelt(call):
+    p, _ = get_player(session, call.from_user.id)
+    item_name = call.data[8:]
+    
+    success, msg = CraftingSystem.furnace_smelt(p, item_name)
+    session.commit()
+    bot.answer_callback_query(call.id, msg)
+    
+    # تحديث قائمة الفرن
+    furnace_menu(call)
+
+@bot.callback_query_handler(func=lambda c: c.data == "back_to_craft")
+def back_to_craft(call):
+    craft_menu(call.message)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("craft_"))
 def do_craft(call):
@@ -2177,7 +2313,6 @@ def village_champion(call):
         txt += "🏅 أنت بطل القرية!\n"
         txt += "⭐ مكافأة يومية: 10 XP + 1 ألماس"
         
-        # مكافأة يومية
         p.add_xp(10)
         p.add_item("diamond", 1)
         session.commit()
@@ -2301,7 +2436,7 @@ def eat_menu(msg):
     session.refresh(p)
     
     inv = p.get_inv()
-    foods = [s for s in inv.values() if s and s['name'] in ["apple", "bread", "cooked_beef", "honey", "golden_apple", "raw_beef", "tropical_fruit"]]
+    foods = [s for s in inv.values() if s and s['name'] in ["apple", "bread", "cooked_beef", "honey", "golden_apple", "raw_beef", "tropical_fruit", "cooked_chicken", "cooked_pork", "cooked_mutton"]]
     
     if not foods:
         return bot.send_message(msg.chat.id, "🍖 لا طعام")
@@ -2333,9 +2468,12 @@ def status(msg):
     session.refresh(p)
     
     titles = p.titles if isinstance(p.titles, list) else []
+    eq = p.get_equip()
+    
     txt = f"👤 {p.username} | ⭐ Lv.{p.level}\n"
     txt += f"❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n"
     txt += f"🕐 {p.get_time_of_day()}\n"
+    txt += f"⚔️ السلاح: {eq.get('weapon', 'لا يوجد')}\n"
     txt += f"🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n"
     txt += f"🐺 حيوان: {p.pet or 'لا يوجد'}\n"
     txt += f"🏛️ معابد: {p.temples_visited or 0}\n"
@@ -2386,6 +2524,7 @@ def stop(call):
     mine_sessions.pop(uid, None)
     battle_sessions.pop(uid, None)
     temple_sessions.pop(uid, None)
+    temple_puzzle_answers.pop(uid, None)
     village_quests.pop(uid, None)
     if uid in building_system.building_progress:
         del building_system.building_progress[uid]
@@ -2428,7 +2567,7 @@ if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
-    print("✨ New features: Dragon system, Nether system, Armor crafting, Village quests!")
+    print("✨ New features: Furnace, Temple buttons, Equipment system!")
     
     Thread(target=keep_alive, daemon=True).start()
     
