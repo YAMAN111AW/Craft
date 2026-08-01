@@ -1010,17 +1010,22 @@ class BattleSystem:
     def enemy_turn(self, player, battle_data):
         enemy = battle_data['enemy']
         player_hp = battle_data['player_hp']
-        player_defense = 0
+        
+        # حساب الدفاع من المعدات
+        player_defense = gm.calc_defense(player)
+        
         if battle_data['player_defending']:
-            player_defense = 5
+            player_defense += 5
             if battle_data['is_night']:
-                player_defense = 3
+                player_defense += 3
             battle_data['player_defending'] = False
+        
         enemy_damage = enemy['damage']
         if battle_data['is_night']:
             enemy_damage = int(enemy_damage * 1.3)
         if battle_data['round'] > 3:
             enemy_damage = int(enemy_damage * (1 + battle_data['round'] * 0.05))
+        
         if enemy.get('special') == 'explode' and random.random() < 0.3:
             enemy_damage *= 2
             battle_data['log'].append(f"💥 {enemy['name']} انفجر!")
@@ -1046,12 +1051,14 @@ class BattleSystem:
                 player.pet = 'wolf'
                 self.session.commit()
                 enemy_damage = 0
+        
         final_damage = max(0, enemy_damage - player_defense)
         if final_damage > 0:
             player_hp = max(0, player_hp - final_damage)
             battle_data['log'].append(f"💢 {enemy['name']} ضربك بـ {final_damage} ضرر")
         else:
             battle_data['log'].append(f"🛡️ تصدت هجوم {enemy['name']}!")
+        
         battle_data['player_hp'] = player_hp
         return battle_data
     
@@ -1462,7 +1469,7 @@ def add_item_cmd(msg):
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {item}!")
 
-# ===== أمر تجهيز السلاح =====
+# ===== أمر تجهيز السلاح (معدل) =====
 
 @bot.message_handler(commands=['equip'])
 def equip_item(msg):
@@ -1470,19 +1477,42 @@ def equip_item(msg):
     args = msg.text.split()
     
     if len(args) < 2:
-        return bot.send_message(msg.chat.id, "❌ استخدم: /equip اسم_السلاح\nمثال: /equip wooden_sword")
+        return bot.send_message(msg.chat.id, "❌ استخدم: /equip اسم_الأداة\nمثال: /equip iron_sword")
     
     item_name = args[1]
-    weapons = ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow", "wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe"]
     
-    if item_name not in weapons:
-        return bot.send_message(msg.chat.id, f"❌ {item_name} ليس سلاحاً معروفاً")
+    # قائمة كل الأدوات المسموحة (سلاح + أدوات + دروع)
+    tools = [
+        "wooden_sword", "stone_sword", "iron_sword", "diamond_sword",
+        "bow",
+        "wooden_axe", "stone_axe", "iron_axe", "diamond_axe",
+        "stone_pickaxe", "iron_pickaxe", "diamond_pickaxe",
+        "wooden_helmet", "stone_helmet", "iron_helmet", "diamond_helmet",
+        "wooden_chestplate", "stone_chestplate", "iron_chestplate", "diamond_chestplate",
+        "wooden_leggings", "stone_leggings", "iron_leggings", "diamond_leggings",
+        "wooden_boots", "stone_boots", "iron_boots", "diamond_boots"
+    ]
+    
+    if item_name not in tools:
+        return bot.send_message(msg.chat.id, f"❌ {item_name} غير معروف")
     
     if not p.has_item(item_name):
-        return bot.send_message(msg.chat.id, f"❌ ليس لديك {item_name} في المخزون")
+        return bot.send_message(msg.chat.id, f"❌ ليس لديك {item_name}!\nاستخدم /additem {item_name} 1")
     
     eq = p.get_equip()
-    eq["weapon"] = item_name
+    
+    # تحديد نوع الأداة لتجهيزها في المكان الصحيح
+    if "sword" in item_name or "axe" in item_name or "pickaxe" in item_name or item_name == "bow":
+        eq["weapon"] = item_name
+    elif "helmet" in item_name:
+        eq["helmet"] = item_name
+    elif "chestplate" in item_name:
+        eq["chestplate"] = item_name
+    elif "leggings" in item_name:
+        eq["leggings"] = item_name
+    elif "boots" in item_name:
+        eq["boots"] = item_name
+    
     p.save_equip(eq)
     p.remove_item(item_name)
     
@@ -1544,7 +1574,7 @@ def dragon_fight(call):
             types.InlineKeyboardButton("🛡️ دفاع", callback_data="dragon_defend")
         )
         kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="dragon_run"))
-        edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
+        bot.send_message(call.message.chat.id, msg, reply_markup=kb)
     else:
         bot.answer_callback_query(call.id, msg)
 
@@ -2217,7 +2247,7 @@ def cancel_build(call):
     else:
         bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
 
-# ===== القرية =====
+# ===== القرية (معدلة) =====
 
 @bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
 def village(msg):
@@ -2256,6 +2286,7 @@ def village_quests(call):
     
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("✅ قبول المهمة", callback_data=f"quest_{quests.index(q)}"))
+    kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_village"))
     
     village_quests[call.from_user.id] = q
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
@@ -2280,6 +2311,21 @@ def accept_quest(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"✅ أكملت المهمة!\n🎁 {q['reward']} x{q['reward_amt']}\n⭐ +{q['xp']}XP")
     else:
         bot.answer_callback_query(call.id, f"❌ تحتاج {q['amount']} {q['item']}")
+
+@bot.callback_query_handler(func=lambda c: c.data == "back_to_village")
+def back_to_village(call):
+    p, _ = get_player(session, call.from_user.id)
+    update_time_and_events(p)
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("😴 نوم", callback_data="v_sleep"),
+        types.InlineKeyboardButton("📋 مهام", callback_data="v_quests"),
+        types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop"),
+        types.InlineKeyboardButton("🏅 تبادل", callback_data="v_trade"),
+        types.InlineKeyboardButton("⚔️ بطل القرية", callback_data="v_champion")
+    )
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_shop")
 def village_shop(call):
@@ -2474,6 +2520,10 @@ def status(msg):
     txt += f"❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n"
     txt += f"🕐 {p.get_time_of_day()}\n"
     txt += f"⚔️ السلاح: {eq.get('weapon', 'لا يوجد')}\n"
+    txt += f"🪖 الخوذة: {eq.get('helmet', 'لا يوجد')}\n"
+    txt += f"👕 الصدرية: {eq.get('chestplate', 'لا يوجد')}\n"
+    txt += f"👖 البنطلون: {eq.get('leggings', 'لا يوجد')}\n"
+    txt += f"👢 الحذاء: {eq.get('boots', 'لا يوجد')}\n"
     txt += f"🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n"
     txt += f"🐺 حيوان: {p.pet or 'لا يوجد'}\n"
     txt += f"🏛️ معابد: {p.temples_visited or 0}\n"
@@ -2567,7 +2617,7 @@ if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
-    print("✨ New features: Furnace, Temple buttons, Equipment system!")
+    print("✨ New features: Fixed equip system, Dragon battles, Village quests, Armor effects!")
     
     Thread(target=keep_alive, daemon=True).start()
     
