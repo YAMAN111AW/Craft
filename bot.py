@@ -3,6 +3,7 @@ from telebot import types
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, Column, BigInteger, Integer, String, JSON, DateTime, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 from threading import Thread
 from flask import Flask
 
@@ -239,7 +240,7 @@ class Player(Base):
     luck = Column(Integer, default=0)
     
     inventory = Column(Text, default=lambda: json.dumps({f"slot_{i}": None for i in range(36)}))
-    equipment = Column(JSON, default=lambda: {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None})
+    equipment = Column(Text, default=lambda: json.dumps({"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}))
     
     current_area = Column(String, default="forest")
     last_action = Column(DateTime, default=datetime.utcnow)
@@ -277,29 +278,26 @@ class Player(Base):
     def get_equip(self):
         defaults = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
         if self.equipment is None:
-            return defaults
-        if isinstance(self.equipment, dict):
-            for key in defaults:
-                if key not in self.equipment:
-                    self.equipment[key] = None
-            return self.equipment
-        if isinstance(self.equipment, str):
-            try:
-                data = json.loads(self.equipment)
-                if isinstance(data, dict):
-                    return data
-            except:
-                pass
-        return defaults
+            return defaults.copy()
+        try:
+            data = json.loads(self.equipment) if isinstance(self.equipment, str) else self.equipment
+            if isinstance(data, dict):
+                for key in defaults:
+                    if key not in data:
+                        data[key] = None
+                return data
+        except:
+            pass
+        return defaults.copy()
     
     def save_equip(self, eq):
         defaults = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
         if not isinstance(eq, dict):
-            eq = defaults
+            eq = defaults.copy()
         for key in defaults:
             if key not in eq:
                 eq[key] = None
-        self.equipment = eq
+        self.equipment = json.dumps(eq, ensure_ascii=False)
     
     def has_item(self, item_name, amount=1):
         inv = self.get_inv()
@@ -1185,33 +1183,6 @@ if not TOKEN:
     exit(1)
 
 bot = telebot.TeleBot(TOKEN)
-
-@bot.message_handler(commands=['test_equip'])
-def test_equip(msg):
-    p, _ = get_player(session, msg.from_user.id)
-    
-    # إضافة سيف
-    p.add_item("iron_sword", 1)
-    session.commit()
-    
-    # تجهيزه
-    eq = p.get_equip()
-    bot.send_message(msg.chat.id, f"قبل التجهيز: weapon = {eq.get('weapon')}")
-    
-    eq["weapon"] = "iron_sword"
-    p.remove_item("iron_sword", 1)
-    
-    bot.send_message(msg.chat.id, f"بعد التعديل: weapon = {eq.get('weapon')}")
-    
-    p.save_equip(eq)
-    session.commit()
-    
-    # إعادة قراءة
-    session.refresh(p)
-    eq2 = p.get_equip()
-    bot.send_message(msg.chat.id, f"بعد الحفظ: weapon = {eq2.get('weapon')}")
-    bot.send_message(msg.chat.id, f"equipment raw: {p.equipment}")
-
 session = Session()
 gm = GameMechanics(session)
 battle_system = BattleSystem(session)
@@ -1337,6 +1308,9 @@ def equip_item(msg):
     
     p.save_equip(eq)
     session.commit()
+    
+    # إعادة قراءة اللاعب من قاعدة البيانات
+    session.refresh(p)
     eq2 = p.get_equip()
     damage = gm.calc_damage(p)
     defense = gm.calc_defense(p)
@@ -1350,18 +1324,6 @@ def equip_item(msg):
     txt += f"\n📊 **الإحصائيات:**\n🗡️ الضرر: {damage}\n🛡️ الدفاع: {defense}"
     
     bot.send_message(msg.chat.id, txt)
-
-    bot.send_message(msg.chat.id, txt)
-
-# *** أضف الكود هنا ***
-@bot.message_handler(commands=['reset_db'])
-def reset_db(msg):
-    try:
-        session.query(Player).delete()
-        session.commit()
-        bot.reply_to(msg, "✅ تم حذف كل البيانات. ابدأ من جديد:\n/additem iron_sword 1\n/equip iron_sword")
-    except Exception as e:
-        bot.reply_to(msg, f"❌ {e}")
 
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
 def area_menu(msg):
@@ -2124,7 +2086,7 @@ if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
-    print("✨ Fixed all issues: equip system, combat weapons, tools!")
+    print("✨ Fixed: equipment now uses Text column (JSON string)")
     
     Thread(target=keep_alive, daemon=True).start()
     
