@@ -2710,6 +2710,7 @@ def keep_alive():
 # ===============================
 # 12. تشغيل البوت
 # ===============================
+    
     if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
