@@ -1185,6 +1185,33 @@ if not TOKEN:
     exit(1)
 
 bot = telebot.TeleBot(TOKEN)
+
+@bot.message_handler(commands=['test_equip'])
+def test_equip(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    
+    # إضافة سيف
+    p.add_item("iron_sword", 1)
+    session.commit()
+    
+    # تجهيزه
+    eq = p.get_equip()
+    bot.send_message(msg.chat.id, f"قبل التجهيز: weapon = {eq.get('weapon')}")
+    
+    eq["weapon"] = "iron_sword"
+    p.remove_item("iron_sword", 1)
+    
+    bot.send_message(msg.chat.id, f"بعد التعديل: weapon = {eq.get('weapon')}")
+    
+    p.save_equip(eq)
+    session.commit()
+    
+    # إعادة قراءة
+    session.refresh(p)
+    eq2 = p.get_equip()
+    bot.send_message(msg.chat.id, f"بعد الحفظ: weapon = {eq2.get('weapon')}")
+    bot.send_message(msg.chat.id, f"equipment raw: {p.equipment}")
+
 session = Session()
 gm = GameMechanics(session)
 battle_system = BattleSystem(session)
@@ -1323,6 +1350,18 @@ def equip_item(msg):
     txt += f"\n📊 **الإحصائيات:**\n🗡️ الضرر: {damage}\n🛡️ الدفاع: {defense}"
     
     bot.send_message(msg.chat.id, txt)
+
+    bot.send_message(msg.chat.id, txt)
+
+# *** أضف الكود هنا ***
+@bot.message_handler(commands=['reset_db'])
+def reset_db(msg):
+    try:
+        session.query(Player).delete()
+        session.commit()
+        bot.reply_to(msg, "✅ تم حذف كل البيانات. ابدأ من جديد:\n/additem iron_sword 1\n/equip iron_sword")
+    except Exception as e:
+        bot.reply_to(msg, f"❌ {e}")
 
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
 def area_menu(msg):
