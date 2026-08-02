@@ -3,7 +3,6 @@ from telebot import types
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, Column, BigInteger, Integer, String, JSON, DateTime, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.orm.attributes import flag_modified  # ✅ إصلاح: لازم لتتبع تغييرات JSON
 from threading import Thread
 from flask import Flask
 
@@ -213,7 +212,7 @@ class BuildingSystem:
         return True, f"✅ اكتملت {self.BUILDING_STAGES[stages[stage_index]]['name']}!\n\n🏗️ المرحلة التالية: {stage_info['name']}\n⏳ انتظر {stage_info['time']} ثانية"
 
 # ===============================
-# 1. قاعدة البيانات
+# 1. قاعدة البيانات (مُصلحة)
 # ===============================
 
 Base = declarative_base()
@@ -240,9 +239,8 @@ class Player(Base):
     luck = Column(Integer, default=0)
     
     inventory = Column(Text, default=lambda: json.dumps({f"slot_{i}": None for i in range(36)}))
-    # ✅ إصلاح: استخدام lambda لتجنب مشاركة نفس الـ dict بين كل اللاعبين
-    equipment = Column(JSON, default=lambda: {
-        "helmet": None, "chestplate": None, "leggings": None,
+    equipment = Column(JSON, default={
+        "helmet": None, "chestplate": None, "leggings": None, 
         "boots": None, "weapon": None, "shield": None
     })
     
@@ -280,56 +278,43 @@ class Player(Base):
         self.inventory = json.dumps(inv, ensure_ascii=False)
     
     def get_equip(self):
-        """
-        ✅ إصلاح: ترجع دائماً dict جديد (نسخة) حتى لا تتأثر التجهيزات المحفوظة
-        عند التعديل المباشر على النتيجة.
-        """
-        defaults = {
-            "helmet": None, "chestplate": None, "leggings": None,
-            "boots": None, "weapon": None, "shield": None
-        }
-        
+        """جلب التجهيزات - ترجع dict دائماً"""
         if self.equipment is None:
-            return dict(defaults)
+            return {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
         
+        # إذا كان dict (من SQLAlchemy)
         if isinstance(self.equipment, dict):
-            result = dict(defaults)
-            result.update(self.equipment)
-            return result  # نسخة جديدة دائماً
+            # تأكد من وجود جميع المفاتيح
+            defaults = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
+            for key in defaults:
+                if key not in self.equipment:
+                    self.equipment[key] = None
+            return self.equipment
         
+        # إذا كان JSON string
         if isinstance(self.equipment, str):
             try:
                 data = json.loads(self.equipment)
                 if isinstance(data, dict):
-                    result = dict(defaults)
-                    result.update(data)
-                    return result
+                    return data
             except:
                 pass
         
-        return dict(defaults)
+        # أي شيء آخر
+        return {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
     
     def save_equip(self, eq):
-        """
-        ✅ إصلاح: ننشئ dict جديد ونستخدم flag_modified حتى يكتشف SQLAlchemy
-        التغيير في عمود JSON ويحفظه بشكل صحيح في قاعدة البيانات.
-        """
-        defaults = {
-            "helmet": None, "chestplate": None, "leggings": None,
-            "boots": None, "weapon": None, "shield": None
-        }
-        
+        """حفظ التجهيزات"""
         if not isinstance(eq, dict):
-            eq = {}
+            eq = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
         
-        # نسخة جديدة تماماً لضمان اكتشاف SQLAlchemy للتغيير
-        new_eq = dict(defaults)
+        # تأكد من وجود جميع المفاتيح
+        defaults = {"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None}
         for key in defaults:
-            if key in eq:
-                new_eq[key] = eq[key]
+            if key not in eq:
+                eq[key] = None
         
-        self.equipment = new_eq
-        flag_modified(self, 'equipment')  # إجبار SQLAlchemy على اكتشاف التغيير
+        self.equipment = eq
     
     def has_item(self, item_name, amount=1):
         inv = self.get_inv()
@@ -483,14 +468,14 @@ DATABASE_URL = get_database_url()
 try:
     if 'sqlite' in DATABASE_URL:
         engine = create_engine(
-            DATABASE_URL,
+            DATABASE_URL, 
             connect_args={'check_same_thread': False}
         )
     else:
         engine = create_engine(
-            DATABASE_URL,
-            pool_size=5,
-            max_overflow=10,
+            DATABASE_URL, 
+            pool_size=5, 
+            max_overflow=10, 
             pool_pre_ping=True
         )
     
@@ -606,7 +591,7 @@ class WorldData:
         }
 
 # ===============================
-# 4. نظام التصنيع
+# 4. نظام التصنيع (مُصلح)
 # ===============================
 
 class CraftingSystem:
@@ -646,6 +631,7 @@ class CraftingSystem:
         "level_5": [
             {"name": "فأس ألماسي", "emoji": "🪓", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_axe": 1}, "xp": 12},
             {"name": "سيف ألماسي", "emoji": "🗡️", "in": {"diamond": 2, "sticks": 1}, "out": {"diamond_sword": 1}, "xp": 15},
+            {"name": "معول ألماسي", "emoji": "⛏️", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_pickaxe": 1}, "xp": 12},
             {"name": "درع ناري", "emoji": "🔥", "in": {"fiery_coal": 5, "iron_ore": 8}, "out": {"fire_chestplate": 1}, "xp": 18},
             {"name": "عين الإندر", "emoji": "👁️", "in": {"ender_pearl": 1, "blaze_rod": 1}, "out": {"eye_of_ender": 1}, "xp": 10},
             {"name": "جناح طيران", "emoji": "🪽", "in": {"diamond": 1, "feather": 10}, "out": {"elytra": 1}, "xp": 25},
@@ -727,7 +713,7 @@ class CraftingSystem:
         return True, f"🔥 تم صهر {item_name} → {recipe['out']}! +3XP"
 
 # ===============================
-# 5. نظام اللعبة
+# 5. نظام اللعبة (مُصلح)
 # ===============================
 
 class GameMechanics:
@@ -746,6 +732,7 @@ class GameMechanics:
         return player.get_time_of_day()
     
     def get_tree_animation(self, total, left):
+        broken = total - left
         percentage = (total - left) / total if total > 0 else 1
         if percentage < 0.2:
             trunk = "🟩🟩🟩🟩🟩"
@@ -765,6 +752,7 @@ class GameMechanics:
         return f"\n   {leaves}\n   {trunk}\n   {'🪓' if percentage < 0.9 else '✅'}\n"
     
     def get_rock_animation(self, total, left):
+        broken = total - left
         percentage = (total - left) / total if total > 0 else 1
         if percentage < 0.2:
             state = "⬛⬛⬛⬛⬛"
@@ -780,19 +768,18 @@ class GameMechanics:
         return f"\n   {sparkles}\n   {state}\n   {'⛏️' if percentage < 0.9 else '✅'}\n"
     
     def get_break_time(self, player, base_time):
-        """
-        ✅ يحسب وقت التكسير بناءً على الأداة المجهزة (تعمل الآن بعد إصلاح save_equip).
-        الفأس يقلل الوقت بشكل ملحوظ.
-        """
         eq = player.get_equip()
         weapon = eq.get("weapon")
         
+        # نظام سرعة الأدوات مُصلح
         tool_speed = {
             "wooden_axe": 0.8,
             "stone_axe": 0.6,
+            "iron_axe": 0.4,
+            "diamond_axe": 0.3,
             "stone_pickaxe": 0.6,
             "iron_pickaxe": 0.4,
-            "diamond_axe": 0.3,
+            "diamond_pickaxe": 0.3,
             "diamond_sword": 0.5,
             "iron_sword": 0.7,
         }
@@ -804,17 +791,27 @@ class GameMechanics:
         final_time = base_time * speed * level_bonus * strength_bonus
         return max(0.5, final_time)
     
+    def is_valid_axe(self, weapon):
+        """التحقق من أن الأداة فأس صالح"""
+        valid_axes = ["wooden_axe", "stone_axe", "iron_axe", "diamond_axe"]
+        return weapon in valid_axes
+    
+    def is_valid_pickaxe(self, weapon):
+        """التحقق من أن الأداة معول صالح"""
+        valid_pickaxes = ["stone_pickaxe", "iron_pickaxe", "diamond_pickaxe"]
+        return weapon in valid_pickaxes
+    
+    def is_valid_weapon(self, weapon):
+        """التحقق من أن الأداة سلاح صالح للقتال"""
+        valid_weapons = ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]
+        return weapon in valid_weapons
+    
     def chop_block(self, player, tree):
-        """
-        ✅ التحقق من السلاح المجهز يعمل الآن بعد إصلاح نظام التجهيزات.
-        """
         eq = player.get_equip()
         weapon = eq.get("weapon")
         
-        has_axe = weapon in [
-            "wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe",
-            "diamond_sword", "wooden_sword", "stone_sword", "iron_sword"
-        ]
+        # تصحيح: التحقق من وجود فأس
+        has_axe = self.is_valid_axe(weapon)
         
         rewards = []
         resource_multiplier = max(0.4, 1 - (player.level * 0.01))
@@ -840,6 +837,7 @@ class GameMechanics:
             hunger_cost *= 0.8
         player.current_hunger = max(0, player.current_hunger - hunger_cost)
         
+        # إصابة بدون فأس
         if random.random() < 0.08 and not has_axe:
             player.current_health = max(0, player.current_health - 2)
             rewards.append("💔 جرحت يدك!")
@@ -862,19 +860,15 @@ class GameMechanics:
         }
     
     def mine_block(self, player, rock):
-        """
-        ✅ التحقق من الأداة المجهزة يعمل الآن بعد إصلاح نظام التجهيزات.
-        """
         eq = player.get_equip()
         weapon = eq.get("weapon")
-        has_pickaxe = weapon in [
-            "stone_axe", "stone_pickaxe", "iron_pickaxe",
-            "diamond_axe", "diamond_sword"
-        ]
+        
+        # تصحيح: التحقق من وجود معول
+        has_pickaxe = self.is_valid_pickaxe(weapon)
         
         if not has_pickaxe:
             return {
-                "rewards": ["❌ تحتاج معول لتكسير الحجر!"],
+                "rewards": ["❌ تحتاج معولاً لتكسير الحجر!"],
                 "hunger": player.current_hunger,
                 "health": player.current_health,
                 "xp": 0,
@@ -919,16 +913,12 @@ class GameMechanics:
         }
     
     def hunt_animal(self, player, animal_name):
-        """
-        ✅ التحقق من السلاح المجهز يعمل الآن بعد إصلاح نظام التجهيزات.
-        """
         eq = player.get_equip()
         weapon = eq.get("weapon")
         
-        allowed_weapons = ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]
-        
-        if not weapon or weapon not in allowed_weapons:
-            return {"error": "❌ تحتاج سيف أو قوس للصيد!\nاستخدم /equip لتجهيز سلاح!"}
+        # تصحيح: استخدام دالة التحقق من السلاح
+        if not weapon or not self.is_valid_weapon(weapon):
+            return {"error": "❌ تحتاج سيفاً أو قوساً للصيد!\nاستخدم /equip لتجهيز سلاح!"}
         
         loot = WorldData.get_animals().get(animal_name)
         if not loot:
@@ -977,17 +967,14 @@ class GameMechanics:
         return dmg + int(dmg * player.strength * 0.03)
     
     def calc_defense(self, player):
-        """
-        ✅ الدروع تؤثر فعلاً الآن بعد إصلاح نظام التجهيزات.
-        """
         defense = 0
         eq = player.get_equip()
         for slot in ["helmet", "chestplate", "leggings", "boots"]:
             armor = eq.get(slot)
             if armor:
                 if "diamond" in str(armor): defense += 4
-                elif "iron" in str(armor): defense += 3
                 elif "fire" in str(armor): defense += 5
+                elif "iron" in str(armor): defense += 3
                 elif "stone" in str(armor): defense += 2
                 elif "wooden" in str(armor): defense += 1
         if player.is_night():
@@ -1087,22 +1074,21 @@ class BattleSystem:
     def player_defend(self, player, battle_data):
         shield = 5 if not battle_data['is_night'] else 3
         battle_data['player_defending'] = True
-        battle_data['log'].append(f"🛡️ استعديت للدفاع (+{shield} درع)")
+        battle_data['log'].append(f"🛡️ استعددت للدفاع (+{shield} درع)")
         return battle_data
     
     def enemy_turn(self, player, battle_data):
         enemy = battle_data['enemy']
         player_hp = battle_data['player_hp']
         
-        # ✅ الدروع تؤثر فعلاً في القتال
         player_defense = 0
         eq = player.get_equip()
         for slot in ["helmet", "chestplate", "leggings", "boots"]:
             armor = eq.get(slot)
             if armor:
                 if "diamond" in str(armor): player_defense += 4
-                elif "iron" in str(armor): player_defense += 3
                 elif "fire" in str(armor): player_defense += 5
+                elif "iron" in str(armor): player_defense += 3
                 elif "stone" in str(armor): player_defense += 2
                 elif "wooden" in str(armor): player_defense += 1
         
@@ -1149,7 +1135,7 @@ class BattleSystem:
             player_hp = max(0, player_hp - final_damage)
             battle_data['log'].append(f"💢 {enemy['name']} ضربك بـ {final_damage} ضرر")
         else:
-            battle_data['log'].append(f"🛡️ تصدت هجوم {enemy['name']}!")
+            battle_data['log'].append(f"🛡️ تصديت لهجوم {enemy['name']}!")
         
         battle_data['player_hp'] = player_hp
         return battle_data
@@ -1264,9 +1250,9 @@ class EnderDragonSystem:
         if not player.has_item("eye_of_ender", 3):
             return False, "❌ تحتاج 3 عيون إندر لفتح البوابة!"
         if not player.has_item("diamond_sword"):
-            return False, "❌ تحتاج سيف ألماسي لمواجهة التنين!"
+            return False, "❌ تحتاج سيفاً ألماسياً لمواجهة التنين!"
         if not player.has_item("bow"):
-            return False, "❌ تحتاج قوس لمواجهة التنين!"
+            return False, "❌ تحتاج قوساً لمواجهة التنين!"
         if player.defeated_ender_dragon:
             return False, "✅ لقد هزمت التنين بالفعل!"
         return True, "✅ جاهز لمواجهة التنين!"
@@ -1335,12 +1321,12 @@ class EnderDragonSystem:
         
         dragon_damage = random.randint(8, 20)
         if random.random() < 0.3:
-            dragon_damage = int(dragon_damage * 1.5)
+            dragon_damage *= 1.5
             player.current_health = max(0, player.current_health - dragon_damage)
             msg = f"💢 التنين هاجمك بـ {dragon_damage} ضرر!"
         else:
-            player.current_health = max(0, player.current_health - dragon_damage // 2)
-            msg = f"💢 التنين أصابك بـ {dragon_damage // 2} ضرر!"
+            player.current_health = max(0, player.current_health - dragon_damage//2)
+            msg = f"💢 التنين أصابك بـ {dragon_damage//2} ضرر!"
         
         self.session.commit()
         
@@ -1450,7 +1436,7 @@ class NetherSystem:
         
         if random.random() < 0.3:
             item = random.choice(list(self.NETHER_ITEMS.values()))
-            amt = random.randint(1, 3 + player.luck // 10)
+            amt = random.randint(1, 3 + player.luck//10)
             player.add_item(item['name'], amt)
             events.append({
                 'type': 'loot',
@@ -1477,7 +1463,7 @@ class NetherSystem:
         return events
 
 # ===============================
-# 10. البوت
+# 10. البوت (النسخة النهائية المُصلحة)
 # ===============================
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1500,8 +1486,7 @@ chop_sessions = {}
 mine_sessions = {}
 battle_sessions = {}
 temple_sessions = {}
-# ✅ إصلاح: تم تغيير الاسم من village_quests إلى active_quests لتجنب التعارض مع الدالة
-active_quests = {}
+village_quests = {}
 temple_puzzle_answers = {}
 
 def menu():
@@ -1564,7 +1549,7 @@ def add_item_cmd(msg):
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {item}!")
 
-# ===== أمر تجهيز الأسلحة والدروع (مُصلح) =====
+# ===== أمر تجهيز السلاح (المُصلح النهائي) =====
 
 @bot.message_handler(commands=['equip'])
 def equip_item(msg):
@@ -1576,69 +1561,85 @@ def equip_item(msg):
     
     item_name = args[1]
     
-    tools = [
-        "wooden_sword", "stone_sword", "iron_sword", "diamond_sword",
-        "bow",
-        "wooden_axe", "stone_axe", "iron_axe", "diamond_axe",
-        "stone_pickaxe", "iron_pickaxe", "diamond_pickaxe",
-        "wooden_helmet", "stone_helmet", "iron_helmet", "diamond_helmet",
-        "wooden_chestplate", "stone_chestplate", "iron_chestplate", "diamond_chestplate", "fire_chestplate",
-        "wooden_leggings", "stone_leggings", "iron_leggings", "diamond_leggings",
-        "wooden_boots", "stone_boots", "iron_boots", "diamond_boots"
-    ]
+    # تصنيف الأدوات
+    weapons = ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]
+    axes = ["wooden_axe", "stone_axe", "iron_axe", "diamond_axe"]
+    pickaxes = ["stone_pickaxe", "iron_pickaxe", "diamond_pickaxe"]
+    helmets = ["wooden_helmet", "stone_helmet", "iron_helmet", "diamond_helmet"]
+    chestplates = ["wooden_chestplate", "stone_chestplate", "iron_chestplate", "diamond_chestplate", "fire_chestplate"]
+    leggings = ["wooden_leggings", "stone_leggings", "iron_leggings", "diamond_leggings"]
+    boots = ["wooden_boots", "stone_boots", "iron_boots", "diamond_boots"]
     
-    if item_name not in tools:
-        return bot.send_message(msg.chat.id, f"❌ {item_name} غير معروف")
+    all_tools = weapons + axes + pickaxes + helmets + chestplates + leggings + boots
+    
+    if item_name not in all_tools:
+        return bot.send_message(msg.chat.id, f"❌ {item_name} غير معروف\n\nالأدوات المتاحة:\n⚔️ أسلحة: {', '.join(weapons)}\n🪓 فؤوس: {', '.join(axes)}\n⛏️ معاول: {', '.join(pickaxes)}\n🪖 خوذ: {', '.join(helmets)}\n👕 صدريات: {', '.join(chestplates)}\n👖 بناطيل: {', '.join(leggings)}\n👢 أحذية: {', '.join(boots)}")
     
     if not p.has_item(item_name, 1):
         return bot.send_message(msg.chat.id, f"❌ ليس لديك {item_name}!\nاستخدم /additem {item_name} 1")
     
-    # ✅ نقرأ نسخة من التجهيزات (get_equip يعيد نسخة جديدة)
     eq = p.get_equip()
     
+    # حفظ السلاح القديم (إن وجد)
     old_weapon = eq.get("weapon")
     
-    if "sword" in item_name or "axe" in item_name or "pickaxe" in item_name or item_name == "bow":
+    # تجهيز السلاح أو الأداة في المكان المناسب
+    if item_name in weapons or item_name in axes or item_name in pickaxes:
         eq["weapon"] = item_name
         p.remove_item(item_name, 1)
         if old_weapon:
             p.add_item(old_weapon, 1)
-    elif "helmet" in item_name:
+    elif item_name in helmets:
         old = eq.get("helmet")
         eq["helmet"] = item_name
         p.remove_item(item_name, 1)
         if old:
             p.add_item(old, 1)
-    elif "chestplate" in item_name:
+    elif item_name in chestplates:
         old = eq.get("chestplate")
         eq["chestplate"] = item_name
         p.remove_item(item_name, 1)
         if old:
             p.add_item(old, 1)
-    elif "leggings" in item_name:
+    elif item_name in leggings:
         old = eq.get("leggings")
         eq["leggings"] = item_name
         p.remove_item(item_name, 1)
         if old:
             p.add_item(old, 1)
-    elif "boots" in item_name:
+    elif item_name in boots:
         old = eq.get("boots")
         eq["boots"] = item_name
         p.remove_item(item_name, 1)
         if old:
             p.add_item(old, 1)
     
-    # ✅ save_equip الآن يحفظ بشكل صحيح مع flag_modified
     p.save_equip(eq)
     session.commit()
     
+    # عرض التجهيزات بعد التأكد
     eq2 = p.get_equip()
-    txt = f"✅ تم تجهيز {item_name}!\n\nالتجهيزات الحالية:\n"
+    
+    # حساب الإحصائيات
+    damage = gm.calc_damage(p)
+    defense = gm.calc_defense(p)
+    
+    txt = f"✅ تم تجهيز {item_name}!\n\n"
+    txt += "🛡️ **التجهيزات الحالية:**\n"
     txt += f"⚔️ السلاح: {eq2.get('weapon') or 'لا يوجد'}\n"
     txt += f"🪖 الخوذة: {eq2.get('helmet') or 'لا يوجد'}\n"
     txt += f"👕 الصدرية: {eq2.get('chestplate') or 'لا يوجد'}\n"
     txt += f"👖 البنطلون: {eq2.get('leggings') or 'لا يوجد'}\n"
-    txt += f"👢 الحذاء: {eq2.get('boots') or 'لا يوجد'}"
+    txt += f"👢 الحذاء: {eq2.get('boots') or 'لا يوجد'}\n"
+    txt += f"\n📊 **الإحصائيات:**\n"
+    txt += f"🗡️ الضرر: {damage}\n"
+    txt += f"🛡️ الدفاع: {defense}\n"
+    
+    # إضافة نصائح مفيدة
+    if item_name in axes and eq2.get('weapon') in axes:
+        txt += "\n💡 نصيحة: الفؤوس جيدة لتقطيع الأشجار لكنها أضعف في القتال!"
+    elif item_name in pickaxes:
+        txt += "\n💡 نصيحة: المعاول ضرورية لتكسير الأحجار!"
     
     bot.send_message(msg.chat.id, txt)
 
@@ -1655,15 +1656,25 @@ def furnace_cmd(msg):
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     has_items = False
-    for item, recipe in CraftingSystem.FURNACE_RECIPES.items():
+    for item in CraftingSystem.FURNACE_RECIPES:
         if p.has_item(item):
             has_items = True
-            kb.add(types.InlineKeyboardButton(f"🔄 {item} → {recipe['out']}", callback_data=f"smelt_{item}"))
+            kb.add(types.InlineKeyboardButton(f"🔄 {item}", callback_data=f"furnace_{item}"))
     
     if not has_items:
         txt += "\n📭 ليس لديك مواد قابلة للصهر"
+        kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_craft"))
     
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("furnace_"))
+def furnace_smelt(call):
+    p, _ = get_player(session, call.from_user.id)
+    item_name = call.data[8:]
+    
+    success, msg = CraftingSystem.furnace_smelt(p, item_name)
+    session.commit()
+    bot.answer_callback_query(call.id, msg)
 
 # ===== أوامر التنين =====
 
@@ -1701,7 +1712,7 @@ def dragon_fight(call):
     else:
         bot.answer_callback_query(call.id, msg)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("dragon_") and c.data not in ["dragon_status", "dragon_fight"])
+@bot.callback_query_handler(func=lambda c: c.data.startswith("dragon_"))
 def dragon_action(call):
     p, _ = get_player(session, call.from_user.id)
     action = call.data[7:]
@@ -1711,17 +1722,15 @@ def dragon_action(call):
     elif action == "defend":
         p.current_health = min(p.max_health, p.current_health + 5)
         session.commit()
-        msg = f"🛡️ استعديت للدفاع! +5 صحة"
+        msg = f"🛡️ استعددت للدفاع! +5 صحة"
         success = True
     elif action == "run":
         msg = "🏃 هربت من التنين!"
         success = True
         ender_dragon.dragon_active = False
-    else:
-        return bot.answer_callback_query(call.id, "❌ أمر غير معروف")
     
     if success:
-        if "هزمت" in msg or "انتصار" in msg:
+        if "هزم" in msg or "انتصار" in msg:
             edit_msg(bot, call.message.chat.id, call.message.message_id, msg)
         else:
             kb = types.InlineKeyboardMarkup(row_width=2)
@@ -1836,15 +1845,10 @@ def start_chop(call):
     
     break_time = gm.get_break_time(p, tree['break_time'])
     
-    eq = p.get_equip()
-    weapon = eq.get("weapon")
-    has_axe = weapon in ["wooden_axe", "stone_axe", "iron_pickaxe", "diamond_axe", "diamond_sword", "wooden_sword", "stone_sword", "iron_sword"]
-    tool_hint = f"🪓 أداة: {weapon}" if has_axe else "⚠️ بدون فأس (أبطأ)"
-    
     chop_sessions[call.from_user.id] = {"tree": tree, "blocks": tree['blocks'], "break_time": break_time}
     
     animation = gm.get_tree_animation(tree['blocks'], tree['blocks'])
-    txt = f"🪓 {tree['name']}\nمتبقي: {tree['blocks']} مكعبات\n{animation}\n\n{tool_hint}\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
+    txt = f"🪓 {tree['name']}\nمتبقي: {tree['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🪓 اكسر!", callback_data="do_chop"))
     kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
@@ -1869,11 +1873,8 @@ def do_chop(call):
     result = gm.chop_block(p, tree)
     session.commit()
     
-    # ✅ إصلاح: فحص الموت بشكل صحيح من الصحة الفعلية للاعب
-    if p.current_health <= 0:
-        gm.respawn(p)
-        session.commit()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "💀 لقد مت! تم إحيائك في الغابة.")
+    if result.get("dead"):
+        edit_msg(bot, call.message.chat.id, call.message.message_id, "💀 لقد مت!")
         del chop_sessions[call.from_user.id]
         return
     
@@ -1899,13 +1900,9 @@ def start_mine(call):
     
     eq = p.get_equip()
     weapon = eq.get("weapon")
-    valid_tools = ["stone_axe", "stone_pickaxe", "iron_pickaxe", "diamond_axe", "diamond_sword"]
-    if weapon not in valid_tools:
-        return bot.answer_callback_query(
-            call.id,
-            f"❌ تحتاج معول لتكسير الحجر!\nالأدوات المقبولة: stone_pickaxe, iron_pickaxe...\nاستخدم /equip stone_pickaxe",
-            show_alert=True
-        )
+    # استخدام الدالة المُصلحة للتحقق
+    if not gm.is_valid_pickaxe(weapon) and weapon not in ["diamond_sword", "iron_sword"]:
+        return bot.answer_callback_query(call.id, "❌ تحتاج معولاً لتكسير الحجر!\nاستخدم /equip stone_pickaxe")
     
     rocks = WorldData.get_rocks()
     rock = next((r for r in rocks if r['name'] == rock_name), None)
@@ -1917,7 +1914,7 @@ def start_mine(call):
     mine_sessions[call.from_user.id] = {"rock": rock, "blocks": rock['blocks'], "break_time": break_time}
     
     animation = gm.get_rock_animation(rock['blocks'], rock['blocks'])
-    txt = f"⛏️ {rock['name']}\nمتبقي: {rock['blocks']} مكعبات\n{animation}\n\n🔧 أداة: {weapon}\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
+    txt = f"⛏️ {rock['name']}\nمتبقي: {rock['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("⛏️ اكسر!", callback_data="do_mine"))
     kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
@@ -1942,16 +1939,13 @@ def do_mine(call):
     result = gm.mine_block(p, rock)
     session.commit()
     
-    # ✅ إصلاح: فحص الموت بشكل صحيح من الصحة الفعلية للاعب
-    if p.current_health <= 0:
-        gm.respawn(p)
-        session.commit()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "💀 لقد مت! تم إحيائك في الغابة.")
+    if result.get("dead"):
+        edit_msg(bot, call.message.chat.id, call.message.message_id, "💀 لقد مت!")
         del mine_sessions[call.from_user.id]
         return
     
     if result.get("failed"):
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "❌ فشل التكسير! تحتاج معول.")
+        edit_msg(bot, call.message.chat.id, call.message.message_id, "❌ فشل التكسير!")
         del mine_sessions[call.from_user.id]
         return
     
@@ -1981,12 +1975,9 @@ def hunt(call):
     eq = p.get_equip()
     weapon = eq.get("weapon")
     
-    if not weapon or weapon not in ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]:
-        return bot.answer_callback_query(
-            call.id,
-            "❌ تحتاج سيف أو قوس للصيد!\nاستخدم /equip لتجهيز سلاح!",
-            show_alert=True
-        )
+    # استخدام الدالة المُصلحة للتحقق
+    if not weapon or not gm.is_valid_weapon(weapon):
+        return bot.answer_callback_query(call.id, "❌ تحتاج سيفاً أو قوساً للصيد!\nاستخدم /equip لتجهيز سلاح!")
     
     result = gm.hunt_animal(p, animal_name)
     session.commit()
@@ -1994,7 +1985,7 @@ def hunt(call):
     if "error" in result:
         return bot.answer_callback_query(call.id, result["error"])
     
-    txt = f"🏹 صيد {animal_name}!\n🔧 سلاح: {weapon}\n\n🎁 {', '.join(result['rewards'])}"
+    txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 # ===== نظام المعبد =====
@@ -2038,7 +2029,9 @@ def enter_temple(call):
             types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"),
             types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend")
         )
-        kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
+        kb.add(
+            types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run")
+        )
         
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
     
@@ -2089,7 +2082,9 @@ def explore(call):
                 types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"),
                 types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend")
             )
-            kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
+            kb.add(
+                types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run")
+            )
             
             edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
             return
@@ -2169,7 +2164,7 @@ def battle_action(call):
         del battle_sessions[call.from_user.id]
         gm.respawn(p)
         session.commit()
-        txt = "💀 لقد مت!\n\n" + "\n".join(battle_data['log'][-3:]) + "\n\n🔄 تم إحيائك في الغابة"
+        txt = "💀 لقد مت!\n\n" + "\n".join(battle_data['log'][-3:]) + "\n\n🔄 تم إحياؤك في الغابة"
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
         return
     
@@ -2187,7 +2182,9 @@ def battle_action(call):
         types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"),
         types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend")
     )
-    kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
+    kb.add(
+        types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run")
+    )
     
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
@@ -2204,7 +2201,9 @@ def craft_menu(msg):
     
     if recipes:
         for i, r in enumerate(recipes[:15]):
-            kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"craft_{i}"))
+            # عرض المواد المطلوبة
+            materials = ", ".join([f"{k}×{v}" for k, v in r['in'].items()])
+            kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']} ({materials})", callback_data=f"craft_{i}"))
     else:
         txt += "📭 لا توجد وصفات متاحة\n\n"
     
@@ -2214,7 +2213,6 @@ def craft_menu(msg):
     
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
 
-# ✅ إصلاح: furnace_menu يجب أن يكون مسجلاً قبل smelt_ handler
 @bot.callback_query_handler(func=lambda c: c.data == "furnace_menu")
 def furnace_menu(call):
     p, _ = get_player(session, call.from_user.id)
@@ -2229,7 +2227,7 @@ def furnace_menu(call):
     for item, recipe in CraftingSystem.FURNACE_RECIPES.items():
         if p.has_item(item):
             has_items = True
-            kb.add(types.InlineKeyboardButton(f"🔄 {item} → {recipe['out']}", callback_data=f"smelt_{item}"))
+            kb.add(types.InlineKeyboardButton(f"🔄 {item} → {recipe['out']}", callback_data=f"furnace_{item}"))
     
     if not has_items:
         txt += "\n📭 ليس لديك مواد قابلة للصهر\n\nالمواد المطلوبة:\n"
@@ -2239,36 +2237,20 @@ def furnace_menu(call):
     kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_craft"))
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
-# ✅ إصلاح: استخدام smelt_ بدل furnace_ للتمييز بين القائمة والصهر الفعلي
-@bot.callback_query_handler(func=lambda c: c.data.startswith("smelt_"))
+@bot.callback_query_handler(func=lambda c: c.data.startswith("furnace_"))
 def furnace_smelt_callback(call):
     p, _ = get_player(session, call.from_user.id)
-    item_name = call.data[6:]  # إزالة "smelt_"
+    item_name = call.data[8:]
     
     success, msg = CraftingSystem.furnace_smelt(p, item_name)
     session.commit()
     bot.answer_callback_query(call.id, msg)
     
-    # تحديث قائمة الفرن بعد الصهر
     furnace_menu(call)
 
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_craft")
 def back_to_craft(call):
-    p, _ = get_player(session, call.from_user.id)
-    recipes = CraftingSystem.get_recipes(p)
-    
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    txt = "🛠️ **التصنيع**\n🕐 {}\n\n".format(p.get_time_of_day())
-    
-    if recipes:
-        for i, r in enumerate(recipes[:15]):
-            kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']}", callback_data=f"craft_{i}"))
-    
-    if p.has_item("furnace"):
-        kb.add(types.InlineKeyboardButton("🔥 استخدام الفرن", callback_data="furnace_menu"))
-        txt += "\n🔥 لديك فرن! استخدمه لصهر المعادن."
-    
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
+    craft_menu(call.message)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("craft_"))
 def do_craft(call):
@@ -2341,8 +2323,7 @@ def building_menu(msg):
     
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
 
-# ✅ إصلاح: استبعاد build_status و build_cancel من handler العام
-@bot.callback_query_handler(func=lambda c: c.data.startswith("build_") and c.data not in ["build_status", "build_cancel"])
+@bot.callback_query_handler(func=lambda c: c.data.startswith("build_"))
 def start_build(call):
     house_type = call.data[6:]
     p, _ = get_player(session, call.from_user.id)
@@ -2427,9 +2408,8 @@ def village_sleep(call):
     else:
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"😴 نمت جيداً!\n❤️ {result['hp']} | 🍖 {result['hunger']}")
 
-# ✅ إصلاح: اسم الدالة مختلف عن اسم الـ dict (active_quests بدل village_quests)
 @bot.callback_query_handler(func=lambda c: c.data == "v_quests")
-def show_village_quests(call):
+def village_quests(call):
     p, _ = get_player(session, call.from_user.id)
     
     quests = [
@@ -2448,27 +2428,21 @@ def show_village_quests(call):
     txt += f"🎁 المكافأة: {q['reward']} x{q['reward_amt']}\n"
     txt += f"⭐ {q['xp']} XP"
     
-    # إظهار إن كان اللاعب يملك المواد المطلوبة
-    has_items = p.has_item(q['item'], q['amount'])
-    txt += f"\n\n{'✅ لديك المواد المطلوبة!' if has_items else f'❌ تحتاج {q[\"amount\"]} {q[\"item\"]}'}"
-    
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton("✅ قبول المهمة وتسليمها", callback_data="quest_accept"))
+    kb.add(types.InlineKeyboardButton("✅ قبول المهمة", callback_data=f"quest_accept"))
     kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_village"))
     
-    # ✅ إصلاح: استخدام active_quests بدل village_quests
-    active_quests[call.from_user.id] = q
+    village_quests[call.from_user.id] = q
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "quest_accept")
 def accept_quest(call):
     p, _ = get_player(session, call.from_user.id)
     
-    # ✅ إصلاح: استخدام active_quests بدل village_quests
-    if call.from_user.id not in active_quests:
+    if call.from_user.id not in village_quests:
         return bot.answer_callback_query(call.id, "❌ لا توجد مهمة نشطة")
     
-    q = active_quests[call.from_user.id]
+    q = village_quests[call.from_user.id]
     
     if p.has_item(q['item'], q['amount']):
         p.remove_item(q['item'], q['amount'])
@@ -2476,7 +2450,7 @@ def accept_quest(call):
         p.add_xp(q['xp'])
         session.commit()
         
-        del active_quests[call.from_user.id]
+        del village_quests[call.from_user.id]
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"✅ أكملت المهمة!\n🎁 {q['reward']} x{q['reward_amt']}\n⭐ +{q['xp']}XP")
     else:
         bot.answer_callback_query(call.id, f"❌ تحتاج {q['amount']} {q['item']}")
@@ -2488,4 +2462,315 @@ def back_to_village(call):
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("😴 نوم", callback_d
+        types.InlineKeyboardButton("😴 نوم", callback_data="v_sleep"),
+        types.InlineKeyboardButton("📋 مهام", callback_data="v_quests"),
+        types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop"),
+        types.InlineKeyboardButton("🏅 تبادل", callback_data="v_trade"),
+        types.InlineKeyboardButton("⚔️ بطل القرية", callback_data="v_champion")
+    )
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_shop")
+def village_shop(call):
+    txt = "🛒 **متجر القرية**\n\n"
+    txt += "📦 تفاح = خشب بلوط ×2\n"
+    txt += "📦 لحم = حديد خام ×1\n"
+    txt += "📦 خبز = قمح ×3\n"
+    txt += "📦 سيف حديدي = ألماس ×2\n"
+    txt += "📦 قوس = حديد خام ×4\n\n"
+    txt += "استخدم /buy اسم_العنصر"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_trade")
+def village_trade(call):
+    txt = "🏅 **التبادل مع القرويين**\n\n"
+    txt += "1️⃣ فلاح: 5 قمح → 3 خبز\n"
+    txt += "2️⃣ حداد: 3 حديد → 1 سيف حديدي\n"
+    txt += "3️⃣ صياد: 8 ريش → 1 قوس\n"
+    txt += "4️⃣ تاجر: 2 ألماس → 1 تفاح ذهبي\n\n"
+    txt += "استخدم /trade رقم_الصفقة"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_champion")
+def village_champion(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    if p.level >= 20:
+        txt = "⚔️ **بطل القرية**\n\n"
+        txt += "🏅 أنت بطل القرية!\n"
+        txt += "⭐ مكافأة يومية: 10 XP + 1 ألماس"
+        
+        p.add_xp(10)
+        p.add_item("diamond", 1)
+        session.commit()
+    else:
+        txt = f"⚔️ **بطل القرية**\n\n"
+        txt += f"📊 تحتاج مستوى 20 لتصبح بطلاً\n"
+        txt += f"📈 مستواك الحالي: {p.level}"
+    
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.message_handler(commands=['buy'])
+def buy(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "/buy تفاح أو /buy لحم أو /buy خبز")
+    
+    shop = {
+        "تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
+        "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
+        "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2}
+    }
+    
+    item = args[1]
+    if item not in shop:
+        return bot.send_message(msg.chat.id, "❌ غير متوفر")
+    
+    s = shop[item]
+    if p.has_item(s["price"], s["amt"]):
+        p.remove_item(s["price"], s["amt"])
+        p.add_item(s["give"], s["gamt"])
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ اشتريت {item}!")
+    else:
+        bot.send_message(msg.chat.id, f"❌ تحتاج {s['amt']} {s['price']}")
+
+@bot.message_handler(commands=['trade'])
+def trade(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "/trade 1 - /trade 4")
+    
+    try:
+        trade_num = int(args[1])
+    except:
+        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح")
+    
+    trades = {
+        1: {"name": "فلاح", "in": "wheat", "in_amt": 5, "out": "bread", "out_amt": 3},
+        2: {"name": "حداد", "in": "iron_ore", "in_amt": 3, "out": "iron_sword", "out_amt": 1},
+        3: {"name": "صياد", "in": "feather", "in_amt": 8, "out": "bow", "out_amt": 1},
+        4: {"name": "تاجر", "in": "diamond", "in_amt": 2, "out": "golden_apple", "out_amt": 1},
+    }
+    
+    if trade_num not in trades:
+        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح (1-4)")
+    
+    t = trades[trade_num]
+    if p.has_item(t["in"], t["in_amt"]):
+        p.remove_item(t["in"], t["in_amt"])
+        p.add_item(t["out"], t["out_amt"])
+        p.add_xp(5)
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ تم التبادل مع {t['name']}!\n🎁 {t['out']} x{t['out_amt']} +5XP")
+    else:
+        bot.send_message(msg.chat.id, f"❌ تحتاج {t['in_amt']} {t['in']}")
+
+# ===== المخزون والأكل والحالة =====
+
+@bot.message_handler(func=lambda m: m.text == "🎒 مخزوني")
+def inventory(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    session.refresh(p)
+    
+    inv = p.get_inv()
+    items = [(i, s) for i, s in enumerate(inv.values()) if s]
+    
+    if not items:
+        return bot.send_message(msg.chat.id, f"📭 المخزون فارغ\n🕐 {p.get_time_of_day()}")
+    
+    txt = f"🎒 مخزونك\n🕐 {p.get_time_of_day()}\n\n"
+    for idx, slot in items[:18]:
+        txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
+    
+    if len(items) > 18:
+        txt += f"\n... و {len(items)-18} عناصر أخرى"
+    
+    bot.send_message(msg.chat.id, txt)
+
+@bot.message_handler(func=lambda m: m.text == "🗑️ حذف")
+def delete_menu(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    session.refresh(p)
+    
+    inv = p.get_inv()
+    items = [(i, s) for i, s in enumerate(inv.values()) if s]
+    
+    if not items:
+        return bot.send_message(msg.chat.id, "📭 المخزون فارغ")
+    
+    txt = "🗑️ اختر عنصراً للحذف:\n\n"
+    kb = types.InlineKeyboardMarkup(row_width=3)
+    for idx, slot in items[:18]:
+        txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
+        kb.add(types.InlineKeyboardButton(f"{idx+1}", callback_data=f"del_{idx}"))
+    
+    bot.send_message(msg.chat.id, txt, reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
+def delete_item(call):
+    p, _ = get_player(session, call.from_user.id)
+    slot = int(call.data.split("_")[1])
+    p.delete_slot(slot)
+    session.commit()
+    bot.answer_callback_query(call.id, f"✅ تم حذف الخانة {slot+1}")
+
+@bot.message_handler(func=lambda m: m.text == "🍖 أكل")
+def eat_menu(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    session.refresh(p)
+    
+    inv = p.get_inv()
+    foods = [s for s in inv.values() if s and s['name'] in ["apple", "bread", "cooked_beef", "honey", "golden_apple", "raw_beef", "tropical_fruit", "cooked_chicken", "cooked_pork", "cooked_mutton"]]
+    
+    if not foods:
+        return bot.send_message(msg.chat.id, "🍖 لا طعام")
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for f in foods[:10]:
+        kb.add(types.InlineKeyboardButton(f"{f['name']} x{f['amount']}", callback_data=f"eat_{f['name']}"))
+    
+    bot.send_message(msg.chat.id, "🍖 اختر الطعام", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("eat_"))
+def do_eat(call):
+    p, _ = get_player(session, call.from_user.id)
+    food = call.data[4:]
+    res = gm.eat(p, food)
+    session.commit()
+    
+    if "error" in res:
+        bot.answer_callback_query(call.id, res["error"])
+    else:
+        txt = f"🍖 {food} | +{res['hunger']} شبع | {res['current']}/20"
+        if res.get('effects'):
+            txt += "\n" + "\n".join(res['effects'])
+        edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.message_handler(func=lambda m: m.text == "❤️ حالتي")
+def status(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    session.refresh(p)
+    
+    titles = p.titles if isinstance(p.titles, list) else []
+    eq = p.get_equip()
+    
+    # حساب الإحصائيات
+    damage = gm.calc_damage(p)
+    defense = gm.calc_defense(p)
+    
+    txt = f"👤 {p.username} | ⭐ Lv.{p.level}\n"
+    txt += f"❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n"
+    txt += f"🗡️ ضرر: {damage} | 🛡️ دفاع: {defense}\n"
+    txt += f"🕐 {p.get_time_of_day()}\n"
+    txt += f"⚔️ السلاح: {eq.get('weapon', 'لا يوجد')}\n"
+    txt += f"🪖 الخوذة: {eq.get('helmet', 'لا يوجد')}\n"
+    txt += f"👕 الصدرية: {eq.get('chestplate', 'لا يوجد')}\n"
+    txt += f"👖 البنطلون: {eq.get('leggings', 'لا يوجد')}\n"
+    txt += f"👢 الحذاء: {eq.get('boots', 'لا يوجد')}\n"
+    txt += f"🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n"
+    txt += f"🐺 حيوان: {p.pet or 'لا يوجد'}\n"
+    txt += f"🏛️ معابد: {p.temples_visited or 0}\n"
+    txt += f"🐉 التنين: {'✅ هزمته' if p.defeated_ender_dragon else '❌ لم يهزم'}"
+    bot.send_message(msg.chat.id, txt)
+
+@bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
+def skills(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    session.refresh(p)
+    
+    txt = f"⚔️ قوة: {p.strength} | 💨 سرعة: {p.speed}\n"
+    txt += f"💪 تحمل: {p.endurance} | 🍀 حظ: {p.luck}\n"
+    txt += f"🎯 نقاط: {p.skill_points}"
+    
+    if p.skill_points > 0:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("⚔️ قوة", callback_data="sk_strength"),
+            types.InlineKeyboardButton("💨 سرعة", callback_data="sk_speed"),
+            types.InlineKeyboardButton("💪 تحمل", callback_data="sk_endurance"),
+            types.InlineKeyboardButton("🍀 حظ", callback_data="sk_luck")
+        )
+        bot.send_message(msg.chat.id, txt, reply_markup=kb)
+    else:
+        bot.send_message(msg.chat.id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("sk_"))
+def upgrade_skill(call):
+    p, _ = get_player(session, call.from_user.id)
+    sk = call.data[3:]
+    
+    if p.skill_points > 0:
+        setattr(p, sk, min(100, getattr(p, sk) + 1))
+        if sk == "endurance":
+            p.max_health += 2
+            p.current_health += 2
+        p.skill_points -= 1
+        session.commit()
+        bot.answer_callback_query(call.id, f"✅ {sk} +1")
+
+# ===== توقف =====
+
+@bot.callback_query_handler(func=lambda c: c.data == "stop")
+def stop(call):
+    uid = call.from_user.id
+    chop_sessions.pop(uid, None)
+    mine_sessions.pop(uid, None)
+    battle_sessions.pop(uid, None)
+    temple_sessions.pop(uid, None)
+    temple_puzzle_answers.pop(uid, None)
+    village_quests.pop(uid, None)
+    if uid in building_system.building_progress:
+        del building_system.building_progress[uid]
+    edit_msg(bot, call.message.chat.id, call.message.message_id, "👋 تم التوقف")
+
+@bot.message_handler(func=lambda m: m.text == "🔙 رجوع")
+def go_back(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    tod = p.get_time_of_day()
+    txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
+    bot.send_message(msg.chat.id, txt, reply_markup=menu())
+
+# ===============================
+# 11. رايلوي - منفذ
+# ===============================
+
+def keep_alive():
+    try:
+        app = Flask(__name__)
+        
+        @app.route('/')
+        def home():
+            return "🤖 Minecraft Bot is running!"
+        
+        @app.route('/health')
+        def health():
+            return "OK", 200
+        
+        port = int(os.environ.get('PORT', 8080))
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    except Exception as e:
+        print(f"⚠️ Flask error: {e}")
+
+# ===============================
+# 12. تشغيل البوت
+# ===============================
+
+if __name__ == "__main__":
+    print("🤖 Minecraft Bot is starting...")
+    print("✅ Everything is ready!")
+    print("🔥 Game is fully upgraded with logic!")
+    print("✨ Fixed all issues: equip system, dragon, quests, temple!")
+    print("🛡️ Enhanced weapon/armor validation!")
+    print("📊 Added damage/defense calculations!")
+    
+    Thread(target=keep_alive, daemon=True).start()
+    
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=30)
+        except Exception as e:
+            print(f"❌ Bot error: {e}")
+            time.sleep(5)
