@@ -2082,7 +2082,7 @@ def keep_alive():
 # نظام إدارة المجموعات - نسخة معدلة
 # ===============================
 
-AUTHORIZED_USER_ID = 7073442874  # ضع هنا ID حسابك (بدون @)
+AUTHORIZED_USER_ID = 7865160958  # ضع هنا ID حسابك (بدون @)
 
 @bot.message_handler(commands=['groups'])
 def show_groups(msg):
