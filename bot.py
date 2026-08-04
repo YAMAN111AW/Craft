@@ -2078,49 +2078,27 @@ def keep_alive():
     except Exception as e:
         print(f"⚠️ Flask error: {e}")
 
-# أضف هذا الكود في ملف البوت حقك (قبل if __name__ == "__main__")
-
 # ===============================
-# نظام إدارة المجموعات
+# نظام إدارة المجموعات - نسخة معدلة
 # ===============================
 
-AUTHORIZED_USER = "yaman_se"  # اليوزر المسموح له فقط
+AUTHORIZED_USER_ID = 7073442874  # ضع هنا ID حسابك (بدون @)
 
 @bot.message_handler(commands=['groups'])
 def show_groups(msg):
     """عرض جميع المجموعات الي البوت فيها"""
     user_id = msg.from_user.id
-    username = msg.from_user.username
     
-    # التحقق من الصلاحية
-    if username != AUTHORIZED_USER:
-        bot.send_message(msg.chat.id, f"❌ هذا الأمر فقط لـ @{AUTHORIZED_USER}")
+    # التحقق من الصلاحية بالـ ID
+    if user_id != AUTHORIZED_USER_ID:
+        bot.send_message(msg.chat.id, f"❌ هذا الأمر غير مسموح لك")
         return
     
-    # جلب المجموعات من آخر التحديثات
+    # جلب المجموعات
     groups = []
     try:
         updates = bot.get_updates()
         for update in updates:
-            if update.message and update.message.chat:
-                chat = update.message.chat
-                if chat.type in ["group", "supergroup"]:
-                    chat_id = chat.id
-                    title = chat.title or "بدون اسم"
-                    # تجنب التكرار
-                    if chat_id not in [g['id'] for g in groups]:
-                        groups.append({
-                            'id': chat_id,
-                            'title': title,
-                            'type': chat.type
-                        })
-    except:
-        pass
-    
-    # حاول جلب من الـ chat_member
-    try:
-        # طريقة بديلة للحصول على المجموعات
-        for update in bot.get_updates():
             if hasattr(update, 'message') and update.message:
                 chat = update.message.chat
                 if chat.type in ["group", "supergroup"]:
@@ -2139,12 +2117,10 @@ def show_groups(msg):
         bot.send_message(msg.chat.id, "📭 البوت ليس في أي مجموعة حالياً")
         return
     
-    # عرض المجموعات
     txt = f"📋 **المجموعات التي فيها البوت:** ({len(groups)})\n\n"
     
     kb = types.InlineKeyboardMarkup(row_width=1)
     for g in groups:
-        # اختصار اسم المجموعة لو طويل
         title = g['title'][:30] + "..." if len(g['title']) > 30 else g['title']
         txt += f"• {title}\n"
         kb.add(types.InlineKeyboardButton(
@@ -2160,31 +2136,25 @@ def show_groups(msg):
 def leave_group_callback(call):
     """طرد البوت من المجموعة المختارة"""
     user_id = call.from_user.id
-    username = call.from_user.username
     
-    # التحقق من الصلاحية
-    if username != AUTHORIZED_USER:
-        bot.answer_callback_query(call.id, f"❌ هذا الأمر فقط لـ @{AUTHORIZED_USER}")
+    # التحقق من الصلاحية بالـ ID
+    if user_id != AUTHORIZED_USER_ID:
+        bot.answer_callback_query(call.id, "❌ هذا الأمر غير مسموح لك")
         return
     
-    # استخراج ID المجموعة
     chat_id = int(call.data.split("_")[2])
     
     try:
-        # محاولة إرسال رسالة وداع
         try:
-            bot.send_message(chat_id, "👋 تم طرد البوت من المجموعة بأمر من @yaman_se")
+            bot.send_message(chat_id, "👋 تم طرد البوت من المجموعة")
         except:
             pass
         
-        # طرد البوت
         bot.leave_chat(chat_id)
-        
         bot.answer_callback_query(call.id, "✅ تم طرد البوت من المجموعة!")
         
-        # تحديث الرسالة
         edit_msg(bot, call.message.chat.id, call.message.message_id, 
-                f"✅ تم طرد البوت من المجموعة بنجاح!\n\n📌 الأمر نفذ بواسطة: @{username}")
+                f"✅ تم طرد البوت من المجموعة بنجاح!")
         
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ فشل الطرد: {str(e)[:50]}")
@@ -2193,18 +2163,17 @@ def leave_group_callback(call):
 @bot.message_handler(commands=['leave_all'])
 def leave_all_groups(msg):
     """طرد البوت من جميع المجموعات"""
-    username = msg.from_user.username
+    user_id = msg.from_user.id
     
-    if username != AUTHORIZED_USER:
-        bot.send_message(msg.chat.id, f"❌ هذا الأمر فقط لـ @{AUTHORIZED_USER}")
+    if user_id != AUTHORIZED_USER_ID:
+        bot.send_message(msg.chat.id, "❌ هذا الأمر غير مسموح لك")
         return
     
-    # جلب المجموعات
     groups = []
     try:
         updates = bot.get_updates()
         for update in updates:
-            if update.message and update.message.chat:
+            if hasattr(update, 'message') and update.message:
                 chat = update.message.chat
                 if chat.type in ["group", "supergroup"]:
                     chat_id = chat.id
@@ -2217,7 +2186,6 @@ def leave_all_groups(msg):
         bot.send_message(msg.chat.id, "📭 البوت ليس في أي مجموعة")
         return
     
-    # طرد من الكل
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("✅ تأكيد طرد البوت من جميع المجموعات", callback_data="confirm_leave_all"))
     kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel_leave_all"))
@@ -2231,18 +2199,17 @@ def leave_all_groups(msg):
 
 @bot.callback_query_handler(func=lambda c: c.data == "confirm_leave_all")
 def confirm_leave_all(call):
-    username = call.from_user.username
+    user_id = call.from_user.id
     
-    if username != AUTHORIZED_USER:
-        bot.answer_callback_query(call.id, f"❌ هذا الأمر فقط لـ @{AUTHORIZED_USER}")
+    if user_id != AUTHORIZED_USER_ID:
+        bot.answer_callback_query(call.id, "❌ هذا الأمر غير مسموح لك")
         return
     
-    # جلب المجموعات
     groups = []
     try:
         updates = bot.get_updates()
         for update in updates:
-            if update.message and update.message.chat:
+            if hasattr(update, 'message') and update.message:
                 chat = update.message.chat
                 if chat.type in ["group", "supergroup"]:
                     chat_id = chat.id
@@ -2262,7 +2229,7 @@ def confirm_leave_all(call):
         try:
             bot.leave_chat(g['id'])
             success_count += 1
-            time.sleep(0.3)  # تأخير لتجنب الحظر
+            time.sleep(0.3)
         except:
             pass
     
@@ -2272,13 +2239,27 @@ def confirm_leave_all(call):
 
 @bot.callback_query_handler(func=lambda c: c.data == "cancel_leave_all")
 def cancel_leave_all(call):
-    username = call.from_user.username
+    user_id = call.from_user.id
     
-    if username != AUTHORIZED_USER:
-        bot.answer_callback_query(call.id, f"❌ هذا الأمر فقط لـ @{AUTHORIZED_USER}")
+    if user_id != AUTHORIZED_USER_ID:
+        bot.answer_callback_query(call.id, "❌ هذا الأمر غير مسموح لك")
         return
     
     edit_msg(bot, call.message.chat.id, call.message.message_id, "❌ تم إلغاء العملية")
+
+
+# أمر لإظهار الـ ID حقك (استخدمه مرة وحدة عشان تعرف الـ ID)
+@bot.message_handler(commands=['myid'])
+def show_my_id(msg):
+    """يعرض الـ ID حقك عشان تضبطه"""
+    user_id = msg.from_user.id
+    username = msg.from_user.username or "مافي يوزر"
+    bot.send_message(msg.chat.id, 
+                    f"📌 **معلومات حسابك:**\n\n"
+                    f"🆔 الـ ID: `{user_id}`\n"
+                    f"👤 اليوزرنيم: @{username}\n\n"
+                    f"ضع هذا الـ ID في الكود:\n"
+                    f"`AUTHORIZED_USER_ID = {user_id}`")
 
 # ===============================
 # 12. تشغيل البوت
