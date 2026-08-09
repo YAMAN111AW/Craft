@@ -260,6 +260,8 @@ class Player(Base):
     temples_visited = Column(Integer, default=0)
     temple_cooldown = Column(DateTime, default=datetime.utcnow)
     
+    in_nether = Column(Boolean, default=False)
+    
     def get_inv(self):
         if self.inventory is None:
             default = {f"slot_{i}": None for i in range(36)}
@@ -645,7 +647,7 @@ class CraftingSystem:
         return True, f"🔥 تم صهر {item_name} ← {recipe['out']}! +3XP"
 
 # ===============================
-# 5. نظام اللعبة
+# 5. نظام اللعبة (مُعدل)
 # ===============================
 
 class GameMechanics:
@@ -818,7 +820,8 @@ class GameMechanics:
         dmg = 2
         eq = player.get_equip()
         w = eq.get("weapon")
-        weapon_dmg = {"wooden_sword": 5, "stone_sword": 8, "iron_sword": 12, "diamond_sword": 16, "bow": 4}
+        # تقليل ضرر السيوف
+        weapon_dmg = {"wooden_sword": 4, "stone_sword": 6, "iron_sword": 9, "diamond_sword": 12, "bow": 3}
         if w in weapon_dmg:
             dmg += weapon_dmg[w]
         if player.pet == "wolf":
@@ -908,7 +911,7 @@ class BattleSystem:
         base_damage = player.strength + 2
         eq = player.get_equip()
         weapon = eq.get('weapon')
-        weapon_dmg = {'wooden_sword': 5, 'stone_sword': 8, 'iron_sword': 12, 'diamond_sword': 16, 'bow': 4}
+        weapon_dmg = {'wooden_sword': 4, 'stone_sword': 6, 'iron_sword': 9, 'diamond_sword': 12, 'bow': 3}
         base_damage += weapon_dmg.get(weapon, 1)
         if battle_data['is_night']:
             base_damage = int(base_damage * 0.8)
@@ -996,12 +999,13 @@ class BattleSystem:
         return None, battle_data
 
 # ===============================
-# 7. نظام المعبد
+# 7. نظام المعبد (مُعدل)
 # ===============================
 
 class TempleSystem:
     def __init__(self, session):
         self.session = session
+        self.temple_active = {}
     
     def enter_temple(self, player):
         if player.temple_cooldown and (datetime.utcnow() - player.temple_cooldown).total_seconds() < 3600:
@@ -1037,6 +1041,14 @@ class TempleSystem:
         player.temple_cooldown = datetime.utcnow()
         self.session.commit()
         return f"🎁 وجدت كنزاً! {treasure['item']} x{treasure['amount']} +15XP"
+    
+    def get_temple_menu(self):
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("🔍 استكشاف", callback_data="temple_explore"),
+            types.InlineKeyboardButton("🚪 خروج", callback_data="temple_leave")
+        )
+        return kb
 
 # ===============================
 # 8. نظام التنين
@@ -1087,7 +1099,7 @@ class EnderDragonSystem:
         if not self.dragon_active or self.dragon_hp <= 0:
             return False, "❌ لا يوجد تنين للقتال!"
         base_damage = 5 + player.strength
-        weapon_dmg = {"diamond_sword": 16, "iron_sword": 12, "stone_sword": 8, "wooden_sword": 5, "bow": 4}
+        weapon_dmg = {"diamond_sword": 12, "iron_sword": 9, "stone_sword": 6, "wooden_sword": 4, "bow": 3}
         eq = player.get_equip()
         base_damage += weapon_dmg.get(eq.get('weapon'), 0)
         if eq.get('weapon') == "bow":
@@ -1133,7 +1145,7 @@ class EnderDragonSystem:
         return f"🐉 **معركة التنين مستمرة!**\n\n❤️ صحة التنين: {self.dragon_hp}/{self.dragon_max_hp}\n👥 المقاتلون: {len(self.fighters)}\n⏳ الوقت: {int((datetime.utcnow() - self.dragon_spawn_time).total_seconds() / 60)} دقيقة"
 
 # ===============================
-# 9. نظام النذر
+# 9. نظام النذر (مُعدل)
 # ===============================
 
 class NetherSystem:
@@ -1148,6 +1160,22 @@ class NetherSystem:
         "nether_brick": {"name": "طوب الجحيم", "emoji": "🧱"},
     }
     
+    # أعداء النذر (أقوى)
+    NETHER_MOBS = [
+        {"name": "بلاز", "emoji": "🔥", "hp": 35, "damage": 14, "xp": 25, 
+         "drops": [("blaze_rod", 2, 0.7), ("fiery_coal", 1, 0.3)]},
+        {"name": "غاست", "emoji": "👻", "hp": 45, "damage": 20, "xp": 35,
+         "drops": [("ghast_tear", 1, 0.4), ("gunpowder", 4, 0.6)]},
+        {"name": "بيغ زومبي", "emoji": "🧟‍♂️", "hp": 40, "damage": 16, "xp": 30,
+         "drops": [("gold_ore", 3, 0.6), ("rotten_flesh", 5, 0.8)]},
+        {"name": "سكلتون الجحيم", "emoji": "💀", "hp": 30, "damage": 18, "xp": 25,
+         "drops": [("nether_brick", 4, 0.7), ("bow", 1, 0.1)]},
+        {"name": "ماغما كيوب", "emoji": "🟠", "hp": 25, "damage": 12, "xp": 20,
+         "drops": [("magma_cream", 2, 0.6), ("fiery_coal", 1, 0.2)]},
+        {"name": "بيدرازين (زعيم)", "emoji": "👾", "hp": 70, "damage": 28, "xp": 55,
+         "drops": [("netherite_scrap", 2, 0.5), ("diamond", 3, 0.3), ("blaze_rod", 5, 0.8)]},
+    ]
+    
     def __init__(self, session):
         self.session = session
     
@@ -1157,24 +1185,79 @@ class NetherSystem:
         if not player.has_item("eye_of_ender", 1):
             return False, "❌ تحتاج عين إندر لفتح بوابة النذر!"
         player.remove_item("eye_of_ender", 1)
+        player.in_nether = True
+        self.session.commit()
         return True, "🔥 دخلت النذر! عالم الجحيم الخطير..."
+    
+    def leave_nether(self, player):
+        player.in_nether = False
+        self.session.commit()
+        return True, "🌍 عدت إلى العالم العادي!"
     
     def explore_nether(self, player):
         events = []
-        if random.random() < 0.3:
+        
+        # 30% قتال مع عدو
+        if random.random() < 0.35:
+            mob = random.choice(self.NETHER_MOBS)
+            events.append({
+                'type': 'enemy',
+                'data': mob,
+                'msg': f"⚔️ {mob['emoji']} {mob['name']} يهاجمك فجأة!"
+            })
+        
+        # 25% كنز
+        if random.random() < 0.25:
             item = random.choice(list(self.NETHER_ITEMS.values()))
-            amt = random.randint(1, 3 + (player.luck or 0) // 10)
+            amt = random.randint(2, 5 + (player.luck or 0) // 5)
             player.add_item(item['name'], amt)
-            events.append({'type': 'loot', 'msg': f"🎁 وجدت {item['emoji']} {item['name']} x{amt}!"})
-        if random.random() < 0.2:
-            damage = random.randint(3, 8)
+            events.append({
+                'type': 'loot',
+                'msg': f"🎁 وجدت صندوقاً في الحمم! {item['emoji']} {item['name']} x{amt}!"
+            })
+        
+        # 15% فخ
+        if random.random() < 0.15:
+            damage = random.randint(5, 15)
             player.current_health = max(0, player.current_health - damage)
-            events.append({'type': 'damage', 'msg': f"🌋 سقطت في الحمم! -{damage} صحة"})
+            events.append({
+                'type': 'damage',
+                'msg': f"💥 انفجرت أرض الحمم تحتك! -{damage} صحة"
+            })
+        
+        # 10% بوابة سرية
+        if random.random() < 0.1:
+            events.append({
+                'type': 'special',
+                'msg': f"🌀 وجدت بوابة سرية! تمكنت من الهروب بأمان... هذه المرة!"
+            })
+        
+        # 5% زعيم
+        if random.random() < 0.05:
+            boss = self.NETHER_MOBS[-1]
+            events.append({
+                'type': 'enemy',
+                'data': boss,
+                'msg': f"👾 **ظهر بيدرازين - زعيم النذر!**\n⚔️ استعد للمعركة!"
+            })
+        
         self.session.commit()
         return events
+    
+    def get_nether_menu(self):
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("🔍 استكشاف", callback_data="nether_explore"),
+            types.InlineKeyboardButton("📦 مخزوني", callback_data="nether_inventory")
+        )
+        kb.add(
+            types.InlineKeyboardButton("❤️ حالتي", callback_data="nether_status"),
+            types.InlineKeyboardButton("🏃 خروج", callback_data="nether_leave")
+        )
+        return kb
 
 # ===============================
-# 10. البوت
+# 10. البوت (الكامل المُعدل)
 # ===============================
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1309,7 +1392,6 @@ def equip_item(msg):
     p.save_equip(eq)
     session.commit()
     
-    # إعادة قراءة اللاعب من قاعدة البيانات
     session.refresh(p)
     eq2 = p.get_equip()
     damage = gm.calc_damage(p)
@@ -1500,7 +1582,43 @@ def enter_temple(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
     elif result[0] == "treasure":
         msg = temple_system.get_temple_reward(p, result[1])
-        edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ في المعبد!\n\n{msg}")
+        kb = temple_system.get_temple_menu()
+        edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ في المعبد!\n\n{msg}", kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "temple_explore")
+def temple_explore(call):
+    p, _ = get_player(session, call.from_user.id)
+    result = temple_system.enter_temple(p)
+    if result[0] == False:
+        return bot.answer_callback_query(call.id, result[1])
+    if result[0] == "puzzle":
+        puzzle = result[1]
+        txt = f"🏛️ معبد غامض!\n\n📜 **{puzzle['q']}**\n\nاختر الإجابة:"
+        answers = list(set([puzzle['a'], "الضوء", "الماء", "الرياح", "التراب", "السماء"]))
+        random.shuffle(answers)
+        answers = answers[:4]
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        for ans in answers:
+            kb.add(types.InlineKeyboardButton(f"📝 {ans}", callback_data=f"temple_answer_{ans}"))
+        temple_puzzle_answers[call.from_user.id] = puzzle
+        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
+    elif result[0] == "monster":
+        monster = result[1]
+        battle_data = battle_system.start_battle(p, monster)
+        battle_sessions[call.from_user.id] = battle_data
+        txt = f"🏛️ في المعبد!\n\n{monster['emoji']} {monster['name']} يهاجمك!\n\n❤️ حياتك: {battle_data['player_hp']}/{battle_data['player_max_hp']}\n❤️ {monster['name']}: {battle_data['enemy_hp']}/{battle_data['enemy_max_hp']}"
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend"))
+        kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
+        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
+    elif result[0] == "treasure":
+        msg = temple_system.get_temple_reward(p, result[1])
+        kb = temple_system.get_temple_menu()
+        edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ في المعبد!\n\n{msg}", kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "temple_leave")
+def temple_leave(call):
+    edit_msg(bot, call.message.chat.id, call.message.message_id, "🚪 خرجت من المعبد")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("temple_answer_"))
 def temple_answer(call):
@@ -1512,7 +1630,8 @@ def temple_answer(call):
     session.commit()
     del temple_puzzle_answers[call.from_user.id]
     bot.answer_callback_query(call.id, msg)
-    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ **نتيجة اللغز**\n\n{msg}")
+    kb = temple_system.get_temple_menu()
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ **نتيجة اللغز**\n\n{msg}", kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("explore_"))
 def explore(call):
@@ -1668,22 +1787,35 @@ def do_craft(call):
 def building_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_events(p)
-    available = building_system.get_available_houses(p)
-    if not available:
-        return bot.send_message(msg.chat.id, "❌ ليس لديك مستوى كافٍ لبناء أي بيت\n\nالمستويات المطلوبة:\n🏠 خشبي: مستوى 1\n🏰 حجري: مستوى 5\n🏛️ قصر: مستوى 15")
+    
+    # التحقق من وجود بناء قيد التنفيذ أولاً
     status = building_system.get_building_status(p)
     if status:
         if status["is_complete"]:
             success, msg_text = building_system.complete_stage(p)
-            bot.send_message(msg.chat.id, msg_text)
-            return
+            if success:
+                bot.send_message(msg.chat.id, msg_text)
+                building_menu(msg)
+                return
+            else:
+                bot.send_message(msg.chat.id, msg_text)
+                return
         else:
-            txt = f"🏗️ جارٍ البناء...\nالبيت: {status['house_name']}\nالمرحلة: {status['stage_name']}\nالتقدم: {'█' * (status['progress']//10)}{'░' * (10 - status['progress']//10)} {status['progress']}%\nالوقت المتبقي: {status['time_left']} ثانية"
+            txt = f"🏗️ جارٍ البناء...\n"
+            txt += f"البيت: {status['house_name']}\n"
+            txt += f"المرحلة: {status['stage_name']}\n"
+            txt += f"التقدم: {'█' * (status['progress']//10)}{'░' * (10 - status['progress']//10)} {status['progress']}%\n"
+            txt += f"الوقت المتبقي: {status['time_left']} ثانية"
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="build_status"))
             kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="build_cancel"))
             bot.send_message(msg.chat.id, txt, reply_markup=kb)
             return
+    
+    available = building_system.get_available_houses(p)
+    if not available:
+        return bot.send_message(msg.chat.id, "❌ ليس لديك مستوى كافٍ لبناء أي بيت\n\nالمستويات المطلوبة:\n🏠 خشبي: مستوى 1\n🏰 حجري: مستوى 5\n🏛️ قصر: مستوى 15")
+    
     txt = "🏠 اختر نوع البيت الذي تريد بنائه:\n\n"
     kb = types.InlineKeyboardMarkup(row_width=1)
     for house_type in available:
@@ -1960,33 +2092,125 @@ def upgrade_skill(call):
         session.commit()
         bot.answer_callback_query(call.id, f"✅ {sk} +1")
 
+# ===============================
+# 10.5 نظام النذر - أوامر البوت
+# ===============================
+
 @bot.message_handler(func=lambda m: m.text == "🔥 النذر")
 def nether_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
+    
+    # إذا كان اللاعب في النذر، اعرض قائمة النذر
+    if p.in_nether:
+        kb = nether.get_nether_menu()
+        txt = f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n📊 المستوى: {p.level}"
+        bot.send_message(msg.chat.id, txt, reply_markup=kb)
+        return
+    
+    # إذا لم يكن في النذر، اعرض زر الدخول
     kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(types.InlineKeyboardButton("🚪 دخول النذر", callback_data="nether_enter"), types.InlineKeyboardButton("🔍 استكشاف النذر", callback_data="nether_explore"))
+    kb.add(
+        types.InlineKeyboardButton("🚪 دخول النذر", callback_data="nether_enter"),
+        types.InlineKeyboardButton("ℹ️ معلومات", callback_data="nether_info")
+    )
     bot.send_message(msg.chat.id, "🔥 **النذر - عالم الجحيم**\n\n⚠️ منطقة خطيرة جداً!\n📍 المستوى المطلوب: 10\n💀 أعداء أقوياء ومكافآت نادرة", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "nether_info")
+def nether_info(call):
+    txt = "🔥 **معلومات النذر**\n\n"
+    txt += "📍 المستوى المطلوب: 10\n"
+    txt += "💀 أعداء: أقوى من العالم العادي\n"
+    txt += "🎁 مكافآت: نادرة وقوية\n"
+    txt += "⚠️ خطر: الحمم والأعداء في كل مكان\n\n"
+    txt += "**المعادن النادرة:**\n"
+    txt += "⚫ خردة النذريت\n"
+    txt += "🔥 عصا البلاز\n"
+    txt += "💧 دمعة الغاست\n"
+    txt += "🟠 كريم الماجما"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_enter")
 def nether_enter(call):
     p, _ = get_player(session, call.from_user.id)
     success, msg = nether.enter_nether(p)
+    if success:
+        kb = nether.get_nether_menu()
+        edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 {msg}\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
+    else:
+        bot.answer_callback_query(call.id, msg)
+
+@bot.callback_query_handler(func=lambda c: c.data == "nether_leave")
+def nether_leave(call):
+    p, _ = get_player(session, call.from_user.id)
+    success, msg = nether.leave_nether(p)
     bot.answer_callback_query(call.id, msg)
+    # العودة إلى القائمة الرئيسية
+    go_back(call.message)
+
+@bot.callback_query_handler(func=lambda c: c.data == "nether_inventory")
+def nether_inventory(call):
+    p, _ = get_player(session, call.from_user.id)
+    inv = p.get_inv()
+    items = [(i, s) for i, s in enumerate(inv.values()) if s]
+    if not items:
+        txt = "📭 المخزون فارغ"
+    else:
+        txt = "🎒 **مخزونك في النذر**\n\n"
+        for idx, slot in items[:18]:
+            txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
+        if len(items) > 18:
+            txt += f"\n... و {len(items)-18} عناصر أخرى"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
+
+@bot.callback_query_handler(func=lambda c: c.data == "nether_status")
+def nether_status(call):
+    p, _ = get_player(session, call.from_user.id)
+    eq = p.get_equip()
+    damage = gm.calc_damage(p)
+    defense = gm.calc_defense(p)
+    txt = f"🔥 **حالتك في النذر**\n\n"
+    txt += f"👤 {p.username} | ⭐ Lv.{p.level}\n"
+    txt += f"❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n"
+    txt += f"🗡️ ضرر: {damage} | 🛡️ دفاع: {defense}\n"
+    txt += f"⚔️ السلاح: {eq.get('weapon', 'لا يوجد')}"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_explore")
 def nether_explore_callback(call):
     p, _ = get_player(session, call.from_user.id)
+    
+    if not p.in_nether:
+        return bot.answer_callback_query(call.id, "❌ أنت لست في النذر!")
+    
     if p.level < 10:
         return bot.answer_callback_query(call.id, "❌ تحتاج مستوى 10!")
+    
+    if p.current_health <= 5:
+        return bot.answer_callback_query(call.id, "❤️ صحتك منخفضة! استرح قبل الاستكشاف!")
+    
     events = nether.explore_nether(p)
     session.commit()
+    
     txt = "🔥 **استكشاف النذر...**\n\n"
+    
     for event in events:
         txt += f"{event['msg']}\n"
+        # إذا كان عدو، ابدأ قتال
+        if event.get('type') == 'enemy':
+            battle_data = battle_system.start_battle(p, event['data'])
+            battle_sessions[call.from_user.id] = battle_data
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            kb.add(types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend"))
+            kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
+            edit_msg(bot, call.message.chat.id, call.message.message_id, txt + f"\n\n❤️ حياتك: {battle_data['player_hp']}/{battle_data['player_max_hp']}\n❤️ العدو: {battle_data['enemy_hp']}/{battle_data['enemy_max_hp']}", kb)
+            return
+    
     txt += f"\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20"
+    
     if not events:
-        txt += "🌋 لا شيء يحدث... النذر هادئ اليوم"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+        txt += "\n🌋 النذر هادئ... لكن الحمم تغلي تحت قدميك!"
+    
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
 
 @bot.message_handler(func=lambda m: m.text == "🐉 التنين")
 def dragon_menu(msg):
@@ -2056,9 +2280,26 @@ def stop(call):
 @bot.message_handler(func=lambda m: m.text == "🔙 رجوع")
 def go_back(msg):
     p, _ = get_player(session, msg.from_user.id)
+    
+    # إذا كان في النذر، اسأل إذا يريد الخروج
+    if p.in_nether:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("✅ نعم، اخرج", callback_data="nether_leave"),
+            types.InlineKeyboardButton("❌ لا، ابق", callback_data="nether_stay")
+        )
+        bot.send_message(msg.chat.id, "🔥 أنت في النذر! هل تريد العودة إلى العالم العادي؟", reply_markup=kb)
+        return
+    
     tod = p.get_time_of_day()
     txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
     bot.send_message(msg.chat.id, txt, reply_markup=menu())
+
+@bot.callback_query_handler(func=lambda c: c.data == "nether_stay")
+def nether_stay(call):
+    p, _ = get_player(session, call.from_user.id)
+    kb = nether.get_nether_menu()
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
 
 # ===============================
 # 11. رايلوي - منفذ
@@ -2078,202 +2319,6 @@ def keep_alive():
     except Exception as e:
         print(f"⚠️ Flask error: {e}")
 
-# أضف هذا الكود في ملف البوت حقك
-
-AUTHORIZED_USER_ID = 7073442874  # ضع الـ ID حقك هنا
-
-# تخزين مؤقت للمجموعات
-cached_groups = {}
-last_update_time = 0
-
-def get_all_groups():
-    """جلب جميع المجموعات التي فيها البوت"""
-    global cached_groups, last_update_time
-    
-    # تجنب جلب البيانات كثيراً
-    if time.time() - last_update_time < 60 and cached_groups:
-        return cached_groups
-    
-    groups = []
-    try:
-        # طريقة 1: من التحديثات
-        updates = bot.get_updates()
-        for update in updates:
-            if hasattr(update, 'message') and update.message:
-                chat = update.message.chat
-                if chat.type in ["group", "supergroup"]:
-                    chat_id = chat.id
-                    title = chat.title or f"مجموعة {chat_id}"
-                    if chat_id not in [g['id'] for g in groups]:
-                        groups.append({'id': chat_id, 'title': title})
-    except:
-        pass
-    
-    cached_groups = groups
-    last_update_time = time.time()
-    return groups
-
-
-@bot.message_handler(commands=['groups'])
-def show_groups(msg):
-    """يعرض قائمة المجموعات مع أزرار للطرد - من أي مكان"""
-    
-    # التحقق من الصلاحية
-    if msg.from_user.id != AUTHORIZED_USER_ID:
-        bot.reply_to(msg, "❌ هذا الأمر فقط لمالك البوت")
-        return
-    
-    groups = get_all_groups()
-    
-    if not groups:
-        bot.reply_to(msg, "📭 البوت ليس في أي مجموعة حالياً")
-        return
-    
-    txt = f"📋 **المجموعات التي فيها البوت:** ({len(groups)})\n\n"
-    txt += "اختر مجموعة لطرد البوت منها:\n"
-    
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    for g in groups:
-        title = g['title'][:35] + "..." if len(g['title']) > 35 else g['title']
-        kb.add(types.InlineKeyboardButton(
-            f"🚪 {title}", 
-            callback_data=f"leave_{g['id']}"
-        ))
-    
-    # زر إضافي لطرد الكل
-    kb.add(types.InlineKeyboardButton("🔥 طرد من الكل", callback_data="leave_all"))
-    kb.add(types.InlineKeyboardButton("🔄 تحديث القائمة", callback_data="refresh_groups"))
-    
-    bot.send_message(msg.chat.id, txt, reply_markup=kb)
-
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("leave_"))
-def leave_group_callback(call):
-    """طرد البوت من المجموعة المختارة"""
-    
-    # التحقق من الصلاحية
-    if call.from_user.id != AUTHORIZED_USER_ID:
-        bot.answer_callback_query(call.id, "❌ هذا الأمر فقط لمالك البوت")
-        return
-    
-    # لو كان زر طرد الكل
-    if call.data == "leave_all":
-        # تأكيد طرد الكل
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("✅ تأكيد طرد الكل", callback_data="confirm_leave_all"))
-        kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel_leave_all"))
-        bot.edit_message_text(
-            "⚠️ **تحذير!**\n\nهل أنت متأكد من طرد البوت من جميع المجموعات؟",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=kb
-        )
-        return
-    
-    # استخراج ID المجموعة
-    chat_id = int(call.data.split("_")[1])
-    
-    # البحث عن اسم المجموعة
-    groups = get_all_groups()
-    group_name = next((g['title'] for g in groups if g['id'] == chat_id), f"المجموعة {chat_id}")
-    
-    try:
-        # محاولة إرسال رسالة وداع
-        try:
-            bot.send_message(chat_id, f"👋 تم طرد البوت من المجموعة بأمر من المالك")
-        except:
-            pass
-        
-        # اترك المجموعة
-        bot.leave_chat(chat_id)
-        
-        # تحديث الكاش
-        global cached_groups
-        cached_groups = [g for g in cached_groups if g['id'] != chat_id]
-        
-        bot.answer_callback_query(call.id, f"✅ تم طرد البوت من: {group_name}")
-        
-        # تحديث الرسالة
-        bot.edit_message_text(
-            f"✅ تم طرد البوت من:\n📌 {group_name}",
-            call.message.chat.id,
-            call.message.message_id
-        )
-        
-    except Exception as e:
-        bot.answer_callback_query(call.id, f"❌ فشل: {str(e)[:50]}")
-
-
-@bot.callback_query_handler(func=lambda c: c.data == "confirm_leave_all")
-def confirm_leave_all(call):
-    """تأكيد طرد البوت من جميع المجموعات"""
-    
-    if call.from_user.id != AUTHORIZED_USER_ID:
-        bot.answer_callback_query(call.id, "❌ هذا الأمر فقط لمالك البوت")
-        return
-    
-    groups = get_all_groups()
-    
-    if not groups:
-        bot.edit_message_text("📭 البوت ليس في أي مجموعة", call.message.chat.id, call.message.message_id)
-        return
-    
-    bot.answer_callback_query(call.id, f"⏳ جاري طرد البوت من {len(groups)} مجموعة...")
-    
-    success_count = 0
-    for g in groups:
-        try:
-            bot.leave_chat(g['id'])
-            success_count += 1
-            time.sleep(0.3)
-        except:
-            pass
-    
-    # تحديث الكاش
-    global cached_groups
-    cached_groups = []
-    
-    bot.edit_message_text(
-        f"✅ تم طرد البوت من {success_count}/{len(groups)} مجموعة",
-        call.message.chat.id,
-        call.message.message_id
-    )
-
-
-@bot.callback_query_handler(func=lambda c: c.data == "cancel_leave_all")
-def cancel_leave_all(call):
-    """إلغاء طرد الكل"""
-    
-    if call.from_user.id != AUTHORIZED_USER_ID:
-        bot.answer_callback_query(call.id, "❌ هذا الأمر فقط لمالك البوت")
-        return
-    
-    bot.edit_message_text("❌ تم إلغاء العملية", call.message.chat.id, call.message.message_id)
-
-
-@bot.callback_query_handler(func=lambda c: c.data == "refresh_groups")
-def refresh_groups(call):
-    """تحديث قائمة المجموعات"""
-    
-    if call.from_user.id != AUTHORIZED_USER_ID:
-        bot.answer_callback_query(call.id, "❌ هذا الأمر فقط لمالك البوت")
-        return
-    
-    global cached_groups, last_update_time
-    cached_groups = []
-    last_update_time = 0
-    
-    bot.answer_callback_query(call.id, "🔄 جاري تحديث القائمة...")
-    
-    # إعادة عرض القائمة
-    show_groups(call.message)
-
-
-@bot.message_handler(commands=['myid'])
-def get_my_id(msg):
-    """يعرض الـ ID حقك"""
-    bot.reply_to(msg, f"🆔 الـ ID حقك: `{msg.from_user.id}`")
-
 # ===============================
 # 12. تشغيل البوت
 # ===============================
@@ -2283,6 +2328,8 @@ if __name__ == "__main__":
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
     print("✨ Fixed: equipment now uses Text column (JSON string)")
+    print("🔥 Nether system with new menu and stronger mobs!")
+    print("⚔️ Balanced weapon damage!")
     
     Thread(target=keep_alive, daemon=True).start()
     
