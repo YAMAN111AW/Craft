@@ -2335,7 +2335,7 @@ if __name__ == "__main__":
     
     while True:
         try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=30)
+            bot.infinity_polling(timeout=120, long_polling_timeout=60)
         except Exception as e:
             print(f"❌ Bot error: {e}")
             time.sleep(5)
