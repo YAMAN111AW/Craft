@@ -2320,22 +2320,27 @@ def keep_alive():
         print(f"⚠️ Flask error: {e}")
 
 # ===============================
-# 12. تشغيل البوت
+# 12. تشغيل البوت (مُعدل)
 # ===============================
 
 if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
-    print("🔥 Game is fully upgraded with logic!")
-    print("✨ Fixed: equipment now uses Text column (JSON string)")
-    print("🔥 Nether system with new menu and stronger mobs!")
-    print("⚔️ Balanced weapon damage!")
     
     Thread(target=keep_alive, daemon=True).start()
     
+    # ===== إعادة تشغيل تلقائي =====
     while True:
         try:
+            print("✅ Bot polling started...")
+            # زيادة timeout
             bot.infinity_polling(timeout=120, long_polling_timeout=60)
         except Exception as e:
-            print(f"❌ Bot error: {e}")
-            time.sleep(5)
+            print(f"❌ Polling error: {e}")
+            print("🔄 Restarting in 10 seconds...")
+            time.sleep(10)
+            # إعادة إنشاء كائن البوت
+            try:
+                bot = telebot.TeleBot(TOKEN)
+            except:
+                pass
