@@ -2302,19 +2302,33 @@ def nether_stay(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
 
 # ===============================
-# 11. رايلوي - منفذ
+# 11. رايلوي - منفذ (مُعدل)
 # ===============================
 
 def keep_alive():
     try:
         app = Flask(__name__)
+        
         @app.route('/')
         def home():
             return "🤖 Minecraft Bot is running!"
+        
         @app.route('/health')
         def health():
             return "OK", 200
+        
+        @app.route('/ping')
+        def ping():
+            return "PONG", 200
+        
+        # ===== مهم جداً: يجيب الوقت الحالي =====
+        @app.route('/time')
+        def time_now():
+            from datetime import datetime
+            return datetime.now().isoformat()
+        
         port = int(os.environ.get('PORT', 8080))
+        print(f"🌐 Flask running on port {port}")
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         print(f"⚠️ Flask error: {e}")
