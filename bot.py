@@ -1,3 +1,27 @@
+# ===============================
+# 0. إصلاح Telegram API (Story Patch)
+# ===============================
+
+import sys
+import warnings
+warnings.filterwarnings("ignore")
+
+# ===== PATCH لمشكلة Story في Telegram API =====
+try:
+    import telebot.types as types
+    if hasattr(types, 'Story'):
+        old_init = types.Story.__init__
+        def fixed_init(self, *args, **kwargs):
+            # إزالة المعاملات غير المدعومة
+            for key in ['chat', 'sender_chat', 'story', 'chat_id']:
+                kwargs.pop(key, None)
+            return old_init(self, *args, **kwargs)
+        types.Story.__init__ = fixed_init
+        print("✅ Telegram Story patched successfully!")
+except Exception as e:
+    print(f"⚠️ Story patch warning: {e}")
+
+
 import os, json, random, telebot, logging, time
 from telebot import types
 from datetime import datetime, timedelta
