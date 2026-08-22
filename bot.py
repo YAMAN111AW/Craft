@@ -1,25 +1,40 @@
 # ===============================
-# 0. إصلاح Telegram API (Story Patch)
+# 0. PATCH لمشكلة Story - الحل النهائي
 # ===============================
 
 import sys
 import warnings
 warnings.filterwarnings("ignore")
 
-# ===== PATCH لمشكلة Story في Telegram API =====
-try:
-    import telebot.types as types
-    if hasattr(types, 'Story'):
-        old_init = types.Story.__init__
-        def fixed_init(self, *args, **kwargs):
-            # إزالة المعاملات غير المدعومة
-            for key in ['chat', 'sender_chat', 'story', 'chat_id']:
-                kwargs.pop(key, None)
-            return old_init(self, *args, **kwargs)
-        types.Story.__init__ = fixed_init
-        print("✅ Telegram Story patched successfully!")
-except Exception as e:
-    print(f"⚠️ Story patch warning: {e}")
+# ===== Patch مباشر =====
+import telebot.types
+
+# طريقة أولى: حذف الكلاس إذا موجود
+if hasattr(telebot.types, 'Story'):
+    del telebot.types.Story
+    print("✅ Removed Story class")
+
+# طريقة ثانية: Patch للـ de_json
+original_de_json = telebot.types.JsonSerializable.de_json
+
+def patched_de_json(cls, json_string):
+    try:
+        return original_de_json(cls, json_string)
+    except TypeError as e:
+        if 'chat' in str(e) or 'Story' in str(e):
+            # تجاهل الحقول غير المعروفة
+            import json as json_lib
+            data = json_lib.loads(json_string) if isinstance(json_string, str) else json_string
+            # إزالة الحقول غير المعروفة
+            if isinstance(data, dict):
+                for key in ['chat', 'sender_chat', 'story']:
+                    data.pop(key, None)
+                return cls(**data)
+        raise
+
+telebot.types.JsonSerializable.de_json = patched_de_json
+
+print("✅ Story patch applied successfully!")
 
 
 import os, json, random, telebot, logging, time
