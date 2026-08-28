@@ -6,33 +6,50 @@ import sys
 import warnings
 warnings.filterwarnings("ignore")
 
-# ===== Patch مباشر =====
+# ===== Patch شامل =====
 import telebot.types
+import json
 
-# طريقة أولى: حذف الكلاس إذا موجود
+# 1. حذف Story إذا موجود
 if hasattr(telebot.types, 'Story'):
     del telebot.types.Story
     print("✅ Removed Story class")
 
-# طريقة ثانية: Patch للـ de_json
-original_de_json = telebot.types.JsonSerializable.de_json
-
-def patched_de_json(cls, json_string):
-    try:
-        return original_de_json(cls, json_string)
-    except TypeError as e:
-        if 'chat' in str(e) or 'Story' in str(e):
-            # تجاهل الحقول غير المعروفة
-            import json as json_lib
-            data = json_lib.loads(json_string) if isinstance(json_string, str) else json_string
-            # إزالة الحقول غير المعروفة
-            if isinstance(data, dict):
-                for key in ['chat', 'sender_chat', 'story']:
-                    data.pop(key, None)
-                return cls(**data)
-        raise
-
-telebot.types.JsonSerializable.de_json = patched_de_json
+# 2. Patch لـ Message و Chat
+try:
+    # Patch Message
+    if hasattr(telebot.types, 'Message'):
+        original_message_init = telebot.types.Message.__init__
+        
+        def patched_message_init(self, *args, **kwargs):
+            # تنظيف الحقول
+            kwargs.pop('story', None)
+            kwargs.pop('sender_chat', None)
+            
+            # تنظيف chat إذا كان موجود
+            if 'chat' in kwargs and isinstance(kwargs['chat'], dict):
+                kwargs['chat'].pop('story', None)
+                kwargs['chat'].pop('sender_chat', None)
+            
+            return original_message_init(self, *args, **kwargs)
+        
+        telebot.types.Message.__init__ = patched_message_init
+        print("✅ Message.__init__ patched!")
+    
+    # Patch Chat
+    if hasattr(telebot.types, 'Chat'):
+        original_chat_init = telebot.types.Chat.__init__
+        
+        def patched_chat_init(self, *args, **kwargs):
+            kwargs.pop('story', None)
+            kwargs.pop('sender_chat', None)
+            return original_chat_init(self, *args, **kwargs)
+        
+        telebot.types.Chat.__init__ = patched_chat_init
+        print("✅ Chat.__init__ patched!")
+        
+except Exception as e:
+    print(f"⚠️ Patch warning: {e}")
 
 print("✅ Story patch applied successfully!")
 
