@@ -53,6 +53,41 @@ except Exception as e:
 
 print("✅ Story patch applied successfully!")
 
+# ===============================
+# 0.5 ترقية قاعدة البيانات التلقائية
+# ===============================
+
+def auto_upgrade_database(engine):
+    """يضيف الأعمدة المفقودة تلقائياً - آمن 100%"""
+    try:
+        from sqlalchemy import inspect, text
+        
+        # نفحص الجدول
+        inspector = inspect(engine)
+        existing_columns = [col['name'] for col in inspector.get_columns('players')]
+        
+        # الأعمدة الجديدة
+        columns_to_add = {
+            'house_type': 'VARCHAR',
+            'in_nether': 'BOOLEAN DEFAULT FALSE',
+            'temples_visited': 'INTEGER DEFAULT 0',
+            'temple_cooldown': 'TIMESTAMP'
+        }
+        
+        # نضيف المفقود
+        with engine.connect() as conn:
+            for col_name, col_type in columns_to_add.items():
+                if col_name not in existing_columns:
+                    print(f"🔄 Adding column: {col_name}")
+                    conn.execute(text(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                    print(f"✅ Column {col_name} added!")
+                    
+        print("✅ Database upgrade complete!")
+        
+    except Exception as e:
+        print(f"⚠️ Auto-upgrade warning: {e}")
+        print("ℹ️ The bot will still work, but some features may be limited")
 
 import os, json, random, telebot, logging, time
 from telebot import types
