@@ -1,37 +1,38 @@
 # ===============================
-# 0. PATCH لمشكلة Story - حل مبسط
+# 0. PATCH لمشكلة Story - الحل النهائي
 # ===============================
 
 import sys
 import warnings
 warnings.filterwarnings("ignore")
 
-# ===== Patch مبسط =====
-try:
-    import telebot.types
-    
-    # حذف Story إذا موجود
-    if hasattr(telebot.types, 'Story'):
-        del telebot.types.Story
-        print("✅ Removed Story class")
-    
-    # Patch لـ process_new_updates
-    original_process = telebot.TeleBot.process_new_updates
-    
-    def patched_process(self, updates):
-        for update in updates:
-            # إزالة الحقول غير المدعومة
-            if hasattr(update, 'story'):
-                update.story = None
-            if hasattr(update, 'chat'):
-                pass
-        return original_process(self, updates)
-    
-    telebot.TeleBot.process_new_updates = patched_process
-    print("✅ Story patch applied (simple method)!")
-    
-except Exception as e:
-    print(f"⚠️ Patch warning: {e}")
+# ===== Patch مباشر =====
+import telebot.types
+
+# طريقة أولى: حذف الكلاس إذا موجود
+if hasattr(telebot.types, 'Story'):
+    del telebot.types.Story
+    print("✅ Removed Story class")
+
+# طريقة ثانية: Patch للـ de_json
+original_de_json = telebot.types.JsonSerializable.de_json
+
+def patched_de_json(cls, json_string):
+    try:
+        return original_de_json(cls, json_string)
+    except TypeError as e:
+        if 'chat' in str(e) or 'Story' in str(e):
+            # تجاهل الحقول غير المعروفة
+            import json as json_lib
+            data = json_lib.loads(json_string) if isinstance(json_string, str) else json_string
+            # إزالة الحقول غير المعروفة
+            if isinstance(data, dict):
+                for key in ['chat', 'sender_chat', 'story']:
+                    data.pop(key, None)
+                return cls(**data)
+        raise
+
+telebot.types.JsonSerializable.de_json = patched_de_json
 
 print("✅ Story patch applied successfully!")
 
@@ -479,13 +480,25 @@ except Exception as e:
     print("✅ قاعدة بيانات SQLite جاهزة")
 
 def get_player(session, user_id, username=None):
-    player = session.query(Player).filter_by(user_id=user_id).first()
-    if not player:
-        player = Player(user_id=user_id, username=username or f"Player_{user_id}")
-        session.add(player)
-        session.commit()
-        return player, True
-    return player, False
+    try:
+        player = session.query(Player).filter_by(user_id=user_id).first()
+        if not player:
+            player = Player(user_id=user_id, username=username or f"Player_{user_id}")
+            session.add(player)
+            session.commit()
+            return player, True
+        return player, False
+    except Exception as e:
+        session.rollback()
+        print(f"⚠️ Error in get_player: {e}")
+        # محاولة مرة ثانية بعد rollback
+        player = session.query(Player).filter_by(user_id=user_id).first()
+        if not player:
+            player = Player(user_id=user_id, username=username or f"Player_{user_id}")
+            session.add(player)
+            session.commit()
+            return player, True
+        return player, False
 
 # ===============================
 # 3. بيانات العالم
@@ -1486,6 +1499,26 @@ battle_sessions = {}
 village_quests = {}
 temple_puzzle_answers = {}
 
+# ===== Decorator لإدارة الجلسة بشكل آمن =====
+def safe_session(func):
+    """Decorator لضمان rollback قبل وبعد تنفيذ الدالة"""
+    def wrapper(*args, **kwargs):
+        try:
+            session.rollback()  # تنظيف أي جلسة معلقة
+            result = func(*args, **kwargs)
+            return result
+        except Exception as e:
+            session.rollback()
+            print(f"⚠️ Session error in {func.__name__}: {e}")
+            # محاولة إرسال رسالة خطأ للمستخدم إذا كان ذلك ممكناً
+            try:
+                if args and hasattr(args[0], 'chat'):
+                    bot.send_message(args[0].chat.id, "⚠️ حدث خطأ في قاعدة البيانات. حاول مرة أخرى.")
+            except:
+                pass
+            raise
+    return wrapper
+
 def menu(player=None):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     
@@ -1526,6 +1559,7 @@ def update_time_and_events(player):
     return time_of_day, events
 
 @bot.message_handler(commands=['start'])
+@safe_session
 def start(msg):
     p, new = get_player(session, msg.from_user.id, msg.from_user.first_name)
     if new:
@@ -1536,6 +1570,7 @@ def start(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 @bot.message_handler(commands=['additem'])
+@safe_session
 def add_item_cmd(msg):
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
@@ -1580,6 +1615,7 @@ def add_item_cmd(msg):
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {args[1]}!")
 
 @bot.message_handler(commands=['equip'])
+@safe_session
 def equip_item(msg):
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
@@ -1652,6 +1688,7 @@ def equip_item(msg):
     bot.send_message(msg.chat.id, txt)
 
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
+@safe_session
 def area_menu(msg):
     p, _ = get_player(session, msg.from_user.id)
     
@@ -1693,7 +1730,9 @@ def area_menu(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("chop_"))
+@safe_session
 def start_chop(call):
+    session.rollback()
     tree_name = call.data[5:]
     p, _ = get_player(session, call.from_user.id)
     if p.is_night():
@@ -1712,7 +1751,9 @@ def start_chop(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "do_chop")
+@safe_session
 def do_chop(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in chop_sessions:
         return bot.answer_callback_query(call.id, "انتهت الجلسة")
@@ -1737,7 +1778,9 @@ def do_chop(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("mine_"))
+@safe_session
 def start_mine(call):
+    session.rollback()
     rock_name = call.data[5:]
     p, _ = get_player(session, call.from_user.id)
     eq = p.get_equip()
@@ -1758,7 +1801,9 @@ def start_mine(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "do_mine")
+@safe_session
 def do_mine(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in mine_sessions:
         return bot.answer_callback_query(call.id, "انتهت الجلسة")
@@ -1787,7 +1832,9 @@ def do_mine(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
+@safe_session
 def hunt(call):
+    session.rollback()
     animal_name = call.data[5:]
     p, _ = get_player(session, call.from_user.id)
     if p.is_night():
@@ -1804,7 +1851,9 @@ def hunt(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "temple_enter")
+@safe_session
 def enter_temple(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     result = temple_system.enter_temple(p)
     if result[0] == False:
@@ -1835,7 +1884,9 @@ def enter_temple(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ في المعبد!\n\n{msg}", kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "temple_explore")
+@safe_session
 def temple_explore(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     result = temple_system.enter_temple(p)
     if result[0] == False:
@@ -1866,11 +1917,15 @@ def temple_explore(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ في المعبد!\n\n{msg}", kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "temple_leave")
+@safe_session
 def temple_leave(call):
+    session.rollback()
     edit_msg(bot, call.message.chat.id, call.message.message_id, "🚪 خرجت من المعبد")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("temple_answer_"))
+@safe_session
 def temple_answer(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in temple_puzzle_answers:
         return bot.answer_callback_query(call.id, "❌ انتهت جلسة المعبد")
@@ -1883,7 +1938,9 @@ def temple_answer(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ **نتيجة اللغز**\n\n{msg}", kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("explore_"))
+@safe_session
 def explore(call):
+    session.rollback()
     area = call.data.split("_")[1]
     p, _ = get_player(session, call.from_user.id)
     time_of_day, events = update_time_and_events(p)
@@ -1924,11 +1981,15 @@ def explore(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "skip_temple")
+@safe_session
 def skip_temple(call):
+    session.rollback()
     edit_msg(bot, call.message.chat.id, call.message.message_id, "🚶 واصلت طريقك...")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("battle_"))
+@safe_session
 def battle_action(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in battle_sessions:
         return bot.answer_callback_query(call.id, "انتهى القتال")
@@ -1977,7 +2038,9 @@ def battle_action(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.message_handler(func=lambda m: m.text == "🛠️ التصنيع")
+@safe_session
 def craft_menu(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     recipes = CraftingSystem.get_recipes(p)
     kb = types.InlineKeyboardMarkup(row_width=1)
@@ -1994,7 +2057,9 @@ def craft_menu(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "furnace_menu")
+@safe_session
 def furnace_menu(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if not p.has_item("furnace"):
         return bot.answer_callback_query(call.id, "❌ ليس لديك فرن!")
@@ -2011,7 +2076,9 @@ def furnace_menu(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("furnace_"))
+@safe_session
 def furnace_smelt_callback(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     success, msg = CraftingSystem.furnace_smelt(p, call.data[8:])
     session.commit()
@@ -2019,11 +2086,15 @@ def furnace_smelt_callback(call):
     furnace_menu(call)
 
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_craft")
+@safe_session
 def back_to_craft(call):
+    session.rollback()
     craft_menu(call.message)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("craft_"))
+@safe_session
 def do_craft(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     idx = int(call.data.split("_")[1])
     recipes = CraftingSystem.get_recipes(p)
@@ -2033,7 +2104,9 @@ def do_craft(call):
         bot.answer_callback_query(call.id, msg)
 
 @bot.message_handler(func=lambda m: m.text == "🏠 بناء")
+@safe_session
 def building_menu(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_events(p)
     
@@ -2083,7 +2156,9 @@ def building_menu(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("build_"))
+@safe_session
 def start_build(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     success, msg = building_system.start_building(p, call.data[6:])
     session.commit()
@@ -2098,7 +2173,9 @@ def start_build(call):
         bot.answer_callback_query(call.id, msg)
 
 @bot.callback_query_handler(func=lambda c: c.data == "build_status")
+@safe_session
 def check_build_status(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     status = building_system.get_building_status(p)
     if not status:
@@ -2117,7 +2194,9 @@ def check_build_status(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "build_cancel")
+@safe_session
 def cancel_build(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if p.user_id in building_system.building_progress:
         del building_system.building_progress[p.user_id]
@@ -2131,7 +2210,9 @@ def cancel_build(call):
 # ===============================
 
 @bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
+@safe_session
 def village(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_events(p)
     kb = types.InlineKeyboardMarkup(row_width=2)
@@ -2141,7 +2222,9 @@ def village(msg):
     bot.send_message(msg.chat.id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_sleep")
+@safe_session
 def village_sleep(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     result = gm.sleep(p)
     session.commit()
@@ -2151,7 +2234,9 @@ def village_sleep(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"😴 نمت جيداً!\n❤️ {result['hp']} | 🍖 {result['hunger']}")
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_quests")
+@safe_session
 def village_quests_menu(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     quests = [
         {"name": "الفلاح", "item": "wheat", "amount": 5, "reward": "bread", "reward_amt": 3, "xp": 10},
@@ -2170,7 +2255,9 @@ def village_quests_menu(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "quest_accept")
+@safe_session
 def accept_quest(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in village_quests:
         return bot.answer_callback_query(call.id, "❌ لا توجد مهمة نشطة")
@@ -2186,7 +2273,9 @@ def accept_quest(call):
         bot.answer_callback_query(call.id, f"❌ تحتاج {q['amount']} {q['item']}")
 
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_village")
+@safe_session
 def back_to_village(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     update_time_and_events(p)
     kb = types.InlineKeyboardMarkup(row_width=2)
@@ -2196,7 +2285,9 @@ def back_to_village(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_shop")
+@safe_session
 def village_shop(call):
+    session.rollback()
     txt = "🛒 **متجر القرية**\n\n"
     txt += "📦 تفاح = خشب بلوط ×2\n"
     txt += "📦 لحم = حديد خام ×1\n"
@@ -2207,7 +2298,9 @@ def village_shop(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_trade")
+@safe_session
 def village_trade(call):
+    session.rollback()
     txt = "🏅 **التبادل مع القرويين**\n\n"
     txt += "1️⃣ فلاح: 5 قمح → 3 خبز\n"
     txt += "2️⃣ حداد: 3 حديد → 1 سيف حديدي\n"
@@ -2220,7 +2313,9 @@ def village_trade(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_champion")
+@safe_session
 def village_champion(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if p.level >= 20:
         p.add_xp(10)
@@ -2231,7 +2326,9 @@ def village_champion(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"⚔️ **بطل القرية**\n\n📊 تحتاج مستوى 20 لتصبح بطلاً\n📈 مستواك الحالي: {p.level}")
 
 @bot.message_handler(commands=['buy'])
+@safe_session
 def buy(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
@@ -2257,7 +2354,9 @@ def buy(msg):
         bot.send_message(msg.chat.id, f"❌ تحتاج {s['amt']} {s['price']}")
 
 @bot.message_handler(commands=['trade'])
+@safe_session
 def trade(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
@@ -2293,7 +2392,9 @@ def trade(msg):
 # ===============================
 
 @bot.message_handler(func=lambda m: m.text == "🎒 مخزوني")
+@safe_session
 def inventory(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     session.refresh(p)
     inv = p.get_inv()
@@ -2308,7 +2409,9 @@ def inventory(msg):
     bot.send_message(msg.chat.id, txt)
 
 @bot.message_handler(func=lambda m: m.text == "🗑️ حذف")
+@safe_session
 def delete_menu(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     session.refresh(p)
     inv = p.get_inv()
@@ -2323,14 +2426,18 @@ def delete_menu(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
+@safe_session
 def delete_item(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     p.delete_slot(int(call.data.split("_")[1]))
     session.commit()
     bot.answer_callback_query(call.id, f"✅ تم حذف الخانة {int(call.data.split('_')[1])+1}")
 
 @bot.message_handler(func=lambda m: m.text == "🍖 أكل")
+@safe_session
 def eat_menu(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     session.refresh(p)
     inv = p.get_inv()
@@ -2343,7 +2450,9 @@ def eat_menu(msg):
     bot.send_message(msg.chat.id, "🍖 اختر الطعام", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("eat_"))
+@safe_session
 def do_eat(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     res = gm.eat(p, call.data[4:])
     session.commit()
@@ -2356,7 +2465,9 @@ def do_eat(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.message_handler(func=lambda m: m.text == "❤️ حالتي")
+@safe_session
 def status(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     session.refresh(p)
     titles = p.titles if isinstance(p.titles, list) else []
@@ -2385,7 +2496,9 @@ def status(msg):
     bot.send_message(msg.chat.id, txt)
 
 @bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
+@safe_session
 def skills(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     session.refresh(p)
     txt = f"⚔️ قوة: {p.strength} | 💨 سرعة: {p.speed}\n💪 تحمل: {p.endurance} | 🍀 حظ: {p.luck}\n🎯 نقاط: {p.skill_points}"
@@ -2398,7 +2511,9 @@ def skills(msg):
         bot.send_message(msg.chat.id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sk_"))
+@safe_session
 def upgrade_skill(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     sk = call.data[3:]
     if p.skill_points > 0:
@@ -2415,7 +2530,9 @@ def upgrade_skill(call):
 # ===============================
 
 @bot.message_handler(func=lambda m: m.text == "🔥 النذر")
+@safe_session
 def nether_menu(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     
     # إذا كان اللاعب في النذر، اعرض قائمة النذر
@@ -2434,7 +2551,9 @@ def nether_menu(msg):
     bot.send_message(msg.chat.id, "🔥 **النذر - عالم الجحيم**\n\n⚠️ منطقة خطيرة جداً!\n📍 المستوى المطلوب: 10\n💀 أعداء أقوياء ومكافآت نادرة", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_info")
+@safe_session
 def nether_info(call):
+    session.rollback()
     txt = "🔥 **معلومات النذر**\n\n"
     txt += "📍 المستوى المطلوب: 10\n"
     txt += "💀 أعداء: أقوى من العالم العادي\n"
@@ -2448,7 +2567,9 @@ def nether_info(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_enter")
+@safe_session
 def nether_enter(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     success, msg = nether.enter_nether(p)
     if success:
@@ -2458,7 +2579,9 @@ def nether_enter(call):
         bot.answer_callback_query(call.id, msg)
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_leave")
+@safe_session
 def nether_leave(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     success, msg = nether.leave_nether(p)
     bot.answer_callback_query(call.id, msg)
@@ -2466,7 +2589,9 @@ def nether_leave(call):
     go_back(call.message)
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_inventory")
+@safe_session
 def nether_inventory(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     inv = p.get_inv()
     items = [(i, s) for i, s in enumerate(inv.values()) if s]
@@ -2481,7 +2606,9 @@ def nether_inventory(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_status")
+@safe_session
 def nether_status(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     eq = p.get_equip()
     damage = gm.calc_damage(p)
@@ -2494,7 +2621,9 @@ def nether_status(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_explore")
+@safe_session
 def nether_explore_callback(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     
     if not p.in_nether:
@@ -2531,7 +2660,9 @@ def nether_explore_callback(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
 
 @bot.message_handler(func=lambda m: m.text == "🐉 التنين")
+@safe_session
 def dragon_menu(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     status = ender_dragon.get_dragon_status()
     can, msg_text = ender_dragon.can_fight_dragon(p)
@@ -2542,11 +2673,15 @@ def dragon_menu(msg):
     bot.send_message(msg.chat.id, f"{status}\n\n{msg_text}", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "dragon_status")
+@safe_session
 def dragon_status_callback(call):
+    session.rollback()
     edit_msg(bot, call.message.chat.id, call.message.message_id, ender_dragon.get_dragon_status())
 
 @bot.callback_query_handler(func=lambda c: c.data == "dragon_fight")
+@safe_session
 def dragon_fight(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     success, msg = ender_dragon.start_dragon_fight(p)
     if success:
@@ -2558,7 +2693,9 @@ def dragon_fight(call):
         bot.answer_callback_query(call.id, msg)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("dragon_"))
+@safe_session
 def dragon_action(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     action = call.data[7:]
     if action == "attack":
@@ -2584,7 +2721,9 @@ def dragon_action(call):
         bot.answer_callback_query(call.id, msg)
 
 @bot.callback_query_handler(func=lambda c: c.data == "stop")
+@safe_session
 def stop(call):
+    session.rollback()
     uid = call.from_user.id
     chop_sessions.pop(uid, None)
     mine_sessions.pop(uid, None)
@@ -2596,7 +2735,9 @@ def stop(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, "👋 تم التوقف")
 
 @bot.message_handler(func=lambda m: m.text == "🔙 رجوع")
+@safe_session
 def go_back(msg):
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     
     # إذا كان في النذر، اسأل إذا يريد الخروج
@@ -2614,7 +2755,9 @@ def go_back(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_stay")
+@safe_session
 def nether_stay(call):
+    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     kb = nether.get_nether_menu()
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
@@ -2660,6 +2803,7 @@ if __name__ == "__main__":
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
     print("✨ Fixed: equipment, additem, shop, trade, nether, house drawing!")
+    print("✨ Fixed: Database session management with rollback!")
     print("="*50)
     
     Thread(target=keep_alive, daemon=True).start()
