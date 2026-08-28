@@ -301,6 +301,9 @@ class Player(Base):
     
     in_nether = Column(Boolean, default=False)
     
+    # تخزين نوع المنزل
+    house_type = Column(String, default=None)
+    
     def get_inv(self):
         if self.inventory is None:
             default = {f"slot_{i}": None for i in range(36)}
@@ -890,6 +893,12 @@ class GameMechanics:
         player.current_area = "forest"
         player.is_exploring = False
         player.game_time = 0
+        
+        # 🔥 إصلاح: إذا مات في النذر، نخرجه من النذر
+        if player.in_nether:
+            player.in_nether = False
+            print(f"✅ Player {player.user_id} was in Nether, respawned to overworld")
+        
         self.session.commit()
     
     def eat(self, player, food):
@@ -1236,7 +1245,7 @@ class NetherSystem:
     def explore_nether(self, player):
         events = []
         
-        # 30% قتال مع عدو
+        # 35% قتال مع عدو
         if random.random() < 0.35:
             mob = random.choice(self.NETHER_MOBS)
             events.append({
@@ -1264,11 +1273,19 @@ class NetherSystem:
                 'msg': f"💥 انفجرت أرض الحمم تحتك! -{damage} صحة"
             })
         
-        # 10% بوابة سرية
+        # 10% بوابة سرية (توصلك لكنز كبير)
         if random.random() < 0.1:
+            big_rewards = [
+                {"name": "diamond", "emoji": "💎", "amt": random.randint(2, 5)},
+                {"name": "netherite_scrap", "emoji": "⚫", "amt": random.randint(3, 5)},
+                {"name": "gold_ore", "emoji": "✨", "amt": random.randint(10, 20)},
+                {"name": "blaze_rod", "emoji": "🔥", "amt": random.randint(5, 10)},
+            ]
+            reward = random.choice(big_rewards)
+            player.add_item(reward['name'], reward['amt'])
             events.append({
-                'type': 'special',
-                'msg': f"🌀 وجدت بوابة سرية! تمكنت من الهروب بأمان... هذه المرة!"
+                'type': 'loot',
+                'msg': f"🌀 بوابة سرية! وجدت {reward['emoji']} {reward['name']} x{reward['amt']}!"
             })
         
         # 5% زعيم
@@ -1296,7 +1313,158 @@ class NetherSystem:
         return kb
 
 # ===============================
-# 10. البوت (الكامل المُعدل)
+# 10. رسم المنزل بمكعبات ماينكرافت
+# ===============================
+
+class MinecraftHouseDrawer:
+    
+    HOUSES = {
+        "wooden": {
+            "name": "بيت خشبي",
+            "emoji": "🏠",
+            "blocks": {
+                "wall": "🟫",
+                "roof": "🟩",
+                "door": "🟧",
+                "window": "🟦",
+                "chimney": "⬛",
+                "ground": "🟩",
+                "light": "🟨"
+            },
+            "layout": [
+                "  🟩🟩🟩  ",
+                " 🟩🟫🟫🟫🟩 ",
+                "🟩🟫🟫🟫🟫🟫🟩",
+                "🟫🟫🟫🟧🟫🟫🟫",
+                "🟫🟫🟦🟫🟦🟫🟫",
+                "🟫🟫🟫🟫🟫🟫🟫",
+                "🟩🟩🟩🟩🟩🟩🟩"
+            ]
+        },
+        "stone": {
+            "name": "بيت حجري",
+            "emoji": "🏰",
+            "blocks": {
+                "wall": "⬜",
+                "roof": "⬛",
+                "door": "🟧",
+                "window": "🟦",
+                "chimney": "⬛",
+                "ground": "🟩",
+                "light": "🟨"
+            },
+            "layout": [
+                "  ⬛⬛⬛  ",
+                " ⬛⬜⬜⬜⬛ ",
+                "⬛⬜⬜⬜⬜⬜⬛",
+                "⬜⬜⬜🟧⬜⬜⬜",
+                "⬜⬜🟦⬜🟦⬜⬜",
+                "⬜⬜⬜⬜⬜⬜⬜",
+                "🟩🟩🟩🟩🟩🟩🟩"
+            ]
+        },
+        "mansion": {
+            "name": "قصر فاخر",
+            "emoji": "🏛️",
+            "blocks": {
+                "wall": "🟪",
+                "roof": "🟨",
+                "door": "🟧",
+                "window": "🟦",
+                "chimney": "⬛",
+                "ground": "🟩",
+                "light": "🟨"
+            },
+            "layout": [
+                "  🟨🟨🟨  ",
+                " 🟨🟪🟪🟪🟨 ",
+                "🟨🟪🟪🟪🟪🟪🟨",
+                "🟪🟪🟪🟧🟪🟪🟪",
+                "🟪🟪🟦🟪🟦🟪🟪",
+                "🟪🟪🟪🟪🟪🟪🟪",
+                "🟨🟨🟨🟨🟨🟨🟨"
+            ]
+        },
+        "nether": {
+            "name": "بيت نذري",
+            "emoji": "🔥",
+            "blocks": {
+                "wall": "🟥",
+                "roof": "🟧",
+                "door": "🟪",
+                "window": "🟨",
+                "chimney": "⬛",
+                "ground": "🟥",
+                "light": "🟧"
+            },
+            "layout": [
+                "  🟧🟧🟧  ",
+                " 🟧🟥🟥🟥🟧 ",
+                "🟧🟥🟥🟥🟥🟥🟧",
+                "🟥🟥🟥🟪🟥🟥🟥",
+                "🟥🟥🟨🟥🟨🟥🟥",
+                "🟥🟥🟥🟥🟥🟥🟥",
+                "🟥🟥🟥🟥🟥🟥🟥"
+            ]
+        }
+    }
+    
+    @classmethod
+    def draw_house(cls, house_type, show_owner=False, owner_name="", level=1):
+        """رسم بيت بمكعبات ماينكرافت"""
+        if house_type not in cls.HOUSES:
+            return "🏚️ لا يوجد بيت"
+        
+        house = cls.HOUSES[house_type]
+        layout = house["layout"]
+        
+        result = []
+        if show_owner and owner_name:
+            result.append(f"🏠 {house['name']} - المستوى {level}")
+            result.append("")
+        
+        result.extend(layout)
+        
+        result.append("")
+        result.append(f"📊 المستوى: {level}")
+        result.append(f"👤 المالك: {owner_name if show_owner else 'غير معروف'}")
+        
+        return "\n".join(result)
+    
+    @classmethod
+    def get_house_art(cls, player):
+        """جلب رسم البيت للاعب"""
+        # التحقق من وجود بناء قيد التنفيذ
+        if player.user_id in building_system.building_progress:
+            progress = building_system.building_progress[player.user_id]
+            house_type = progress["house_type"]
+            stage_index = progress["stage_index"]
+            stages = progress["stages"]
+            
+            progress_percent = int((stage_index / len(stages)) * 100)
+            
+            if stage_index >= len(stages) - 1:
+                return cls.draw_house(house_type, True, player.username, 1)
+            else:
+                return f"""🏗️ **قيد البناء...** ({progress_percent}%)
+
+🟫🟫🟫🟫🟫🟫🟫
+🟫🟫⬜⬜⬜🟫🟫
+🟫🟫⬜⬜⬜🟫🟫
+🟫🟫⬜⬜⬜🟫🟫
+🟫🟫🟫🟫🟫🟫🟫
+🟩🟩🟩🟩🟩🟩🟩
+
+⏳ المرحلة: {building_system.BUILDING_STAGES[progress['current_stage']]['name']}"""
+        
+        # إذا كان البيت مكتمل (من قاعدة البيانات)
+        if player.house_type:
+            return cls.draw_house(player.house_type, True, player.username, 1)
+        
+        return "🏚️ لا يوجد بيت"
+
+# ===============================
+# 11. البوت (الكامل المُعدل)
 # ===============================
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1319,8 +1487,16 @@ battle_sessions = {}
 village_quests = {}
 temple_puzzle_answers = {}
 
-def menu():
+def menu(player=None):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    
+    # إذا كان اللاعب في النذر
+    if player and player.in_nether:
+        kb.add("🔥 النذر")
+        kb.add("🔙 رجوع")
+        return kb
+    
+    # القائمة العادية
     kb.add("🌳 الغابة", "🕳️ الكهف")
     kb.add("🏘️ القرية", "🎒 مخزوني")
     kb.add("🛠️ التصنيع", "🏠 بناء")
@@ -1358,7 +1534,7 @@ def start(msg):
     else:
         tod = p.get_time_of_day()
         txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
-    bot.send_message(msg.chat.id, txt, reply_markup=menu())
+    bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 @bot.message_handler(commands=['additem'])
 def add_item_cmd(msg):
@@ -1370,6 +1546,36 @@ def add_item_cmd(msg):
         amt = int(args[2])
     except:
         return bot.send_message(msg.chat.id, "❌ العدد يجب أن يكون رقماً")
+    
+    # قائمة العناصر المسموحة
+    valid_items = [
+        "oak_wood", "spruce_wood", "birch_wood", "jungle_wood",
+        "stone", "coal", "iron_ore", "gold_ore", "diamond", "emerald",
+        "apple", "bread", "cooked_beef", "honey", "golden_apple",
+        "raw_beef", "tropical_fruit", "cooked_chicken", "cooked_pork", "cooked_mutton",
+        "leather", "feather", "bone", "wool", "milk", "egg",
+        "wooden_planks", "sticks", "crafting_table", "furnace",
+        "wooden_sword", "stone_sword", "iron_sword", "diamond_sword",
+        "bow", "arrow",
+        "wooden_axe", "stone_axe", "iron_axe", "diamond_axe",
+        "stone_pickaxe", "iron_pickaxe", "diamond_pickaxe",
+        "wooden_helmet", "stone_helmet", "iron_helmet", "diamond_helmet",
+        "wooden_chestplate", "stone_chestplate", "iron_chestplate", "diamond_chestplate",
+        "wooden_leggings", "stone_leggings", "iron_leggings", "diamond_leggings",
+        "wooden_boots", "stone_boots", "iron_boots", "diamond_boots",
+        "fire_chestplate", "elytra",
+        "eye_of_ender", "ender_pearl", "blaze_rod",
+        "nether_wart", "ghast_tear", "magma_cream", "netherite_scrap",
+        "soul_sand", "nether_brick", "fiery_coal",
+        "healing_potion", "enchanted_book",
+        "wheat", "sap", "mushroom", "spider_silk", "spider_eye",
+        "gunpowder", "rotten_flesh", "torch", "glass", "fence", "wooden_door",
+        "bear_meat", "bear_pelt", "saddle", "hoof"
+    ]
+    
+    if args[1] not in valid_items:
+        return bot.send_message(msg.chat.id, f"❌ {args[1]} غير معروف!\nالعناصر المتاحة: {', '.join(valid_items[:20])}...")
+    
     p.add_item(args[1], amt)
     session.commit()
     bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {args[1]}!")
@@ -1448,8 +1654,13 @@ def equip_item(msg):
 
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
 def area_menu(msg):
-    is_forest = msg.text == "🌳 الغابة"
     p, _ = get_player(session, msg.from_user.id)
+    
+    # 🔥 إذا كان في النذر، منع الدخول
+    if p.in_nether:
+        return bot.send_message(msg.chat.id, "❌ لا يمكنك الذهاب للغابة أو الكهف وأنت في النذر!\nاخرج أولاً باستخدام 🔙 رجوع.")
+    
+    is_forest = msg.text == "🌳 الغابة"
     time_of_day, events = update_time_and_events(p)
     is_night = p.is_night()
     
@@ -1833,6 +2044,9 @@ def building_menu(msg):
         if status["is_complete"]:
             success, msg_text = building_system.complete_stage(p)
             if success:
+                # حفظ نوع المنزل في قاعدة البيانات
+                p.house_type = status["house_type"]
+                session.commit()
                 bot.send_message(msg.chat.id, msg_text)
                 building_menu(msg)
                 return
@@ -1892,7 +2106,9 @@ def check_build_status(call):
         return bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
     if status["is_complete"]:
         success, msg = building_system.complete_stage(p)
-        session.commit()
+        if success:
+            p.house_type = status["house_type"]
+            session.commit()
         edit_msg(bot, call.message.chat.id, call.message.message_id, msg)
         return
     txt = f"🏗️ جارٍ البناء...\nالبيت: {status['house_name']}\nالمرحلة: {status['stage_name']}\nالتقدم: {'█' * (status['progress']//10)}{'░' * (10 - status['progress']//10)} {status['progress']}%\nالوقت المتبقي: {status['time_left']} ثانية"
@@ -1910,6 +2126,10 @@ def cancel_build(call):
         edit_msg(bot, call.message.chat.id, call.message.message_id, "❌ تم إلغاء البناء")
     else:
         bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
+
+# ===============================
+# 11.5 القرية - المتجر والتبادل (مُصلح)
+# ===============================
 
 @bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
 def village(msg):
@@ -1976,6 +2196,30 @@ def back_to_village(call):
     kb.add(types.InlineKeyboardButton("⚔️ بطل القرية", callback_data="v_champion"))
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", kb)
 
+@bot.callback_query_handler(func=lambda c: c.data == "v_shop")
+def village_shop(call):
+    txt = "🛒 **متجر القرية**\n\n"
+    txt += "📦 تفاح = خشب بلوط ×2\n"
+    txt += "📦 لحم = حديد خام ×1\n"
+    txt += "📦 خبز = قمح ×3\n\n"
+    txt += "استخدم /buy تفاح\n"
+    txt += "استخدم /buy لحم\n"
+    txt += "استخدم /buy خبز"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_trade")
+def village_trade(call):
+    txt = "🏅 **التبادل مع القرويين**\n\n"
+    txt += "1️⃣ فلاح: 5 قمح → 3 خبز\n"
+    txt += "2️⃣ حداد: 3 حديد → 1 سيف حديدي\n"
+    txt += "3️⃣ صياد: 8 ريش → 1 قوس\n"
+    txt += "4️⃣ تاجر: 2 ألماس → 1 تفاح ذهبي\n\n"
+    txt += "استخدم /trade 1\n"
+    txt += "استخدم /trade 2\n"
+    txt += "استخدم /trade 3\n"
+    txt += "استخدم /trade 4"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
 @bot.callback_query_handler(func=lambda c: c.data == "v_champion")
 def village_champion(call):
     p, _ = get_player(session, call.from_user.id)
@@ -1992,17 +2236,24 @@ def buy(msg):
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
-        return bot.send_message(msg.chat.id, "/buy تفاح أو /buy لحم أو /buy خبز")
-    shop = {"تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3}, "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1}, "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2}}
+        return bot.send_message(msg.chat.id, "❌ استخدم: /buy تفاح\n/buy لحم\n/buy خبز")
+    
+    shop = {
+        "تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
+        "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
+        "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2}
+    }
+    
     item = args[1]
     if item not in shop:
-        return bot.send_message(msg.chat.id, "❌ غير متوفر")
+        return bot.send_message(msg.chat.id, "❌ العنصر غير متوفر!\nالمتاح: تفاح، لحم، خبز")
+    
     s = shop[item]
     if p.has_item(s["price"], s["amt"]):
         p.remove_item(s["price"], s["amt"])
         p.add_item(s["give"], s["gamt"])
         session.commit()
-        bot.send_message(msg.chat.id, f"✅ اشتريت {item}!")
+        bot.send_message(msg.chat.id, f"✅ اشتريت {item} x{s['gamt']}!")
     else:
         bot.send_message(msg.chat.id, f"❌ تحتاج {s['amt']} {s['price']}")
 
@@ -2011,14 +2262,23 @@ def trade(msg):
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
-        return bot.send_message(msg.chat.id, "/trade 1 - /trade 4")
+        return bot.send_message(msg.chat.id, "❌ استخدم: /trade 1\n/trade 2\n/trade 3\n/trade 4")
+    
     try:
         trade_num = int(args[1])
     except:
         return bot.send_message(msg.chat.id, "❌ رقم غير صحيح")
-    trades = {1: {"name": "فلاح", "in": "wheat", "in_amt": 5, "out": "bread", "out_amt": 3}, 2: {"name": "حداد", "in": "iron_ore", "in_amt": 3, "out": "iron_sword", "out_amt": 1}, 3: {"name": "صياد", "in": "feather", "in_amt": 8, "out": "bow", "out_amt": 1}, 4: {"name": "تاجر", "in": "diamond", "in_amt": 2, "out": "golden_apple", "out_amt": 1}}
+    
+    trades = {
+        1: {"name": "فلاح", "in": "wheat", "in_amt": 5, "out": "bread", "out_amt": 3},
+        2: {"name": "حداد", "in": "iron_ore", "in_amt": 3, "out": "iron_sword", "out_amt": 1},
+        3: {"name": "صياد", "in": "feather", "in_amt": 8, "out": "bow", "out_amt": 1},
+        4: {"name": "تاجر", "in": "diamond", "in_amt": 2, "out": "golden_apple", "out_amt": 1},
+    }
+    
     if trade_num not in trades:
         return bot.send_message(msg.chat.id, "❌ رقم غير صحيح (1-4)")
+    
     t = trades[trade_num]
     if p.has_item(t["in"], t["in_amt"]):
         p.remove_item(t["in"], t["in_amt"])
@@ -2028,6 +2288,10 @@ def trade(msg):
         bot.send_message(msg.chat.id, f"✅ تم التبادل مع {t['name']}!\n🎁 {t['out']} x{t['out_amt']} +5XP")
     else:
         bot.send_message(msg.chat.id, f"❌ تحتاج {t['in_amt']} {t['in']}")
+
+# ===============================
+# 12. باقي أوامر البوت
+# ===============================
 
 @bot.message_handler(func=lambda m: m.text == "🎒 مخزوني")
 def inventory(msg):
@@ -2100,9 +2364,25 @@ def status(msg):
     eq = p.get_equip()
     damage = gm.calc_damage(p)
     defense = gm.calc_defense(p)
-    txt = f"👤 {p.username} | ⭐ Lv.{p.level}\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🗡️ ضرر: {damage} | 🛡️ دفاع: {defense}\n🕐 {p.get_time_of_day()}\n"
-    txt += f"⚔️ السلاح/الأداة: {eq.get('weapon', 'لا يوجد')}\n🪖 الخوذة: {eq.get('helmet', 'لا يوجد')}\n👕 الصدرية: {eq.get('chestplate', 'لا يوجد')}\n👖 البنطلون: {eq.get('leggings', 'لا يوجد')}\n👢 الحذاء: {eq.get('boots', 'لا يوجد')}\n"
-    txt += f"🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n🐺 حيوان: {p.pet or 'لا يوجد'}\n🏛️ معابد: {p.temples_visited or 0}\n🐉 التنين: {'✅ هزمته' if p.defeated_ender_dragon else '❌ لم يهزم'}"
+    
+    # رسم المنزل
+    house_art = MinecraftHouseDrawer.get_house_art(p)
+    
+    txt = f"👤 {p.username} | ⭐ Lv.{p.level}\n"
+    txt += f"❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n"
+    txt += f"🗡️ ضرر: {damage} | 🛡️ دفاع: {defense}\n"
+    txt += f"🕐 {p.get_time_of_day()}\n"
+    txt += f"⚔️ السلاح/الأداة: {eq.get('weapon', 'لا يوجد')}\n"
+    txt += f"🪖 الخوذة: {eq.get('helmet', 'لا يوجد')}\n"
+    txt += f"👕 الصدرية: {eq.get('chestplate', 'لا يوجد')}\n"
+    txt += f"👖 البنطلون: {eq.get('leggings', 'لا يوجد')}\n"
+    txt += f"👢 الحذاء: {eq.get('boots', 'لا يوجد')}\n"
+    txt += f"\n🏠 **منزلك:**\n{house_art}\n"
+    txt += f"🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n"
+    txt += f"🐺 حيوان: {p.pet or 'لا يوجد'}\n"
+    txt += f"🏛️ معابد: {p.temples_visited or 0}\n"
+    txt += f"🐉 التنين: {'✅ هزمته' if p.defeated_ender_dragon else '❌ لم يهزم'}"
+    
     bot.send_message(msg.chat.id, txt)
 
 @bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
@@ -2132,7 +2412,7 @@ def upgrade_skill(call):
         bot.answer_callback_query(call.id, f"✅ {sk} +1")
 
 # ===============================
-# 10.5 نظام النذر - أوامر البوت
+# 13. نظام النذر - أوامر البوت
 # ===============================
 
 @bot.message_handler(func=lambda m: m.text == "🔥 النذر")
@@ -2332,7 +2612,7 @@ def go_back(msg):
     
     tod = p.get_time_of_day()
     txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
-    bot.send_message(msg.chat.id, txt, reply_markup=menu())
+    bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_stay")
 def nether_stay(call):
@@ -2341,7 +2621,7 @@ def nether_stay(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
 
 # ===============================
-# 11. رايلوي - منفذ (مُعدل)
+# 14. رايلوي - منفذ (مُعدل)
 # ===============================
 
 def keep_alive():
@@ -2360,7 +2640,6 @@ def keep_alive():
         def ping():
             return "PONG", 200
         
-        # ===== مهم جداً: يجيب الوقت الحالي =====
         @app.route('/time')
         def time_now():
             from datetime import datetime
@@ -2373,26 +2652,27 @@ def keep_alive():
         print(f"⚠️ Flask error: {e}")
 
 # ===============================
-# 12. تشغيل البوت (مُعدل)
+# 15. تشغيل البوت (مُعدل)
 # ===============================
 
 if __name__ == "__main__":
+    print("="*50)
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
+    print("🔥 Game is fully upgraded with logic!")
+    print("✨ Fixed: equipment, additem, shop, trade, nether, house drawing!")
+    print("="*50)
     
     Thread(target=keep_alive, daemon=True).start()
     
-    # ===== إعادة تشغيل تلقائي =====
     while True:
         try:
             print("✅ Bot polling started...")
-            # زيادة timeout
             bot.infinity_polling(timeout=120, long_polling_timeout=60)
         except Exception as e:
             print(f"❌ Polling error: {e}")
             print("🔄 Restarting in 10 seconds...")
             time.sleep(10)
-            # إعادة إنشاء كائن البوت
             try:
                 bot = telebot.TeleBot(TOKEN)
             except:
