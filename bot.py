@@ -1,38 +1,37 @@
 # ===============================
-# 0. PATCH لمشكلة Story - الحل النهائي
+# 0. PATCH لمشكلة Story - حل مبسط
 # ===============================
 
 import sys
 import warnings
 warnings.filterwarnings("ignore")
 
-# ===== Patch مباشر =====
-import telebot.types
-
-# طريقة أولى: حذف الكلاس إذا موجود
-if hasattr(telebot.types, 'Story'):
-    del telebot.types.Story
-    print("✅ Removed Story class")
-
-# طريقة ثانية: Patch للـ de_json
-original_de_json = telebot.types.JsonSerializable.de_json
-
-def patched_de_json(cls, json_string):
-    try:
-        return original_de_json(cls, json_string)
-    except TypeError as e:
-        if 'chat' in str(e) or 'Story' in str(e):
-            # تجاهل الحقول غير المعروفة
-            import json as json_lib
-            data = json_lib.loads(json_string) if isinstance(json_string, str) else json_string
-            # إزالة الحقول غير المعروفة
-            if isinstance(data, dict):
-                for key in ['chat', 'sender_chat', 'story']:
-                    data.pop(key, None)
-                return cls(**data)
-        raise
-
-telebot.types.JsonSerializable.de_json = patched_de_json
+# ===== Patch مبسط =====
+try:
+    import telebot.types
+    
+    # حذف Story إذا موجود
+    if hasattr(telebot.types, 'Story'):
+        del telebot.types.Story
+        print("✅ Removed Story class")
+    
+    # Patch لـ process_new_updates
+    original_process = telebot.TeleBot.process_new_updates
+    
+    def patched_process(self, updates):
+        for update in updates:
+            # إزالة الحقول غير المدعومة
+            if hasattr(update, 'story'):
+                update.story = None
+            if hasattr(update, 'chat'):
+                pass
+        return original_process(self, updates)
+    
+    telebot.TeleBot.process_new_updates = patched_process
+    print("✅ Story patch applied (simple method)!")
+    
+except Exception as e:
+    print(f"⚠️ Patch warning: {e}")
 
 print("✅ Story patch applied successfully!")
 
