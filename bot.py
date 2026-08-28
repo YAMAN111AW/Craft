@@ -1,38 +1,74 @@
 # ===============================
-# 0.5 ترقية قاعدة البيانات التلقائية
+# 0.0 إصلاح قاعدة البيانات - يجري تلقائياً
 # ===============================
 
-def auto_upgrade_database(engine):
-    """يضيف الأعمدة المفقودة تلقائياً - آمن 100%"""
+def fix_database():
+    """يضيف الأعمدة المفقودة بدون أي تدخل منك"""
+    import os
+    import psycopg2
+    from urllib.parse import urlparse
+    
+    # جلب رابط قاعدة البيانات
+    database_url = os.getenv('DATABASE_URL')
+    if not database_url:
+        print("⚠️ No DATABASE_URL found, using SQLite")
+        return
+    
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    
     try:
-        from sqlalchemy import inspect, text
+        # تحليل الرابط
+        parsed = urlparse(database_url)
+        dbname = parsed.path[1:]
+        user = parsed.username
+        password = parsed.password
+        host = parsed.hostname
+        port = parsed.port or 5432
         
-        # نفحص الجدول
-        inspector = inspect(engine)
-        existing_columns = [col['name'] for col in inspector.get_columns('players')]
+        # الاتصال بقاعدة البيانات مباشرة (بدون SQLAlchemy)
+        conn = psycopg2.connect(
+            dbname=dbname,
+            user=user,
+            password=password,
+            host=host,
+            port=port
+        )
+        conn.autocommit = True
+        cursor = conn.cursor()
         
-        # الأعمدة الجديدة
-        columns_to_add = {
-            'house_type': 'VARCHAR',
+        # جلب الأعمدة الموجودة
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'players'
+        """)
+        existing_columns = [row[0] for row in cursor.fetchall()]
+        
+        # الأعمدة المطلوبة
+        required_columns = {
+            'house_type': 'VARCHAR(255)',
             'in_nether': 'BOOLEAN DEFAULT FALSE',
             'temples_visited': 'INTEGER DEFAULT 0',
             'temple_cooldown': 'TIMESTAMP'
         }
         
-        # نضيف المفقود
-        with engine.connect() as conn:
-            for col_name, col_type in columns_to_add.items():
-                if col_name not in existing_columns:
-                    print(f"🔄 Adding column: {col_name}")
-                    conn.execute(text(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}"))
-                    conn.commit()
-                    print(f"✅ Column {col_name} added!")
-                    
-        print("✅ Database upgrade complete!")
+        # إضافة الأعمدة المفقودة
+        for col_name, col_type in required_columns.items():
+            if col_name not in existing_columns:
+                print(f"🔧 Adding column: {col_name}")
+                cursor.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}")
+                print(f"✅ Column {col_name} added!")
+        
+        cursor.close()
+        conn.close()
+        print("✅ Database fixed successfully!")
         
     except Exception as e:
-        print(f"⚠️ Auto-upgrade warning: {e}")
-        print("ℹ️ The bot will still work, but some features may be limited")
+        print(f"⚠️ Fix error: {e}")
+
+# ===== تشغيل الإصلاح =====
+fix_database()
 
 # ===============================
 # 0. PATCH لمشكلة Story - الحل النهائي
