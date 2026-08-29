@@ -2495,7 +2495,7 @@ def inventory(msg):
     if not items:
         return bot.send_message(msg.chat.id, f"📭 المخزون فارغ\n🕐 {p.get_time_of_day()}")
     txt = f"🎒 مخزونك\n🕐 {p.get_time_of_day()}\n\n"
-    for idx, slot in items[:18]:
+    for idx, slot in items:
         txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
     if len(items) > 18:
         txt += f"\n... و {len(items)-18} عناصر أخرى"
@@ -2513,7 +2513,7 @@ def delete_menu(msg):
         return bot.send_message(msg.chat.id, "📭 المخزون فارغ")
     txt = "🗑️ اختر عنصراً للحذف:\n\n"
     kb = types.InlineKeyboardMarkup(row_width=3)
-    for idx, slot in items[:18]:
+    for idx, slot in items:
         txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
         kb.add(types.InlineKeyboardButton(f"{idx+1}", callback_data=f"del_{idx}"))
     bot.send_message(msg.chat.id, txt, reply_markup=kb)
