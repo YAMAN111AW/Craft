@@ -2886,6 +2886,14 @@ def keep_alive():
     except Exception as e:
         print(f"⚠️ Flask error: {e}")
 
+@bot.message_handler(commands=['fixrecipes'])
+@safe_session
+def fix_recipes(msg):
+    p, _ = get_player(session, msg.from_user.id)
+    p.recipes_unlocked = ["base", "level_2", "level_3", "level_4", "level_5"]
+    session.commit()
+    bot.send_message(msg.chat.id, "✅ تم تحديث الوصفات! روح للتصنيع 🛠️")
+
 # ===============================
 # 15. تشغيل البوت (مُعدل)
 # ===============================
