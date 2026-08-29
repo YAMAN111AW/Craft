@@ -679,7 +679,7 @@ class WorldData:
         }
 
 # ===============================
-# 4. نظام التصنيع
+# 4. نظام التصنيع (معدل)
 # ===============================
 
 class CraftingSystem:
@@ -741,40 +741,40 @@ class CraftingSystem:
         "raw_mutton": {"out": "cooked_mutton", "time": 3, "fuel": "coal", "fuel_amt": 1},
     }
     
-   @classmethod
-   def get_recipes(cls, player):
-    recipes = player.recipes_unlocked if isinstance(player.recipes_unlocked, list) else json.loads(player.recipes_unlocked or '["base"]')
-    
-    if "base" not in recipes:
-        recipes.append("base")
-    if player.level >= 2 and "level_2" not in recipes:
-        recipes.append("level_2")
-    if player.level >= 5 and "level_3" not in recipes:
-        recipes.append("level_3")
-    if player.level >= 10 and "level_4" not in recipes:
-        recipes.append("level_4")
-    if player.level >= 15 and "level_5" not in recipes:
-        recipes.append("level_5")
-    
-    player.recipes_unlocked = recipes
-    
-    all_recipes = []
-    for level in recipes:
-        if level in cls.RECIPES:
-            all_recipes.extend(cls.RECIPES[level])
-    return all_recipes
+    @classmethod
+    def get_recipes(cls, player):
+        recipes = player.recipes_unlocked if isinstance(player.recipes_unlocked, list) else json.loads(player.recipes_unlocked or '["base"]')
+        
+        if "base" not in recipes:
+            recipes.append("base")
+        if player.level >= 2 and "level_2" not in recipes:
+            recipes.append("level_2")
+        if player.level >= 5 and "level_3" not in recipes:
+            recipes.append("level_3")
+        if player.level >= 10 and "level_4" not in recipes:
+            recipes.append("level_4")
+        if player.level >= 15 and "level_5" not in recipes:
+            recipes.append("level_5")
+        
+        player.recipes_unlocked = recipes
+        
+        all_recipes = []
+        for level in recipes:
+            if level in cls.RECIPES:
+                all_recipes.extend(cls.RECIPES[level])
+        return all_recipes
 
-   @classmethod
-   def craft(cls, player, recipe):
-    for item, amt in recipe["in"].items():
-        if not player.has_item(item, amt):
-            return False, f"❌ تحتاج {amt} من {item}"
-    for item, amt in recipe["in"].items():
-        player.remove_item(item, amt)
-    for item, amt in recipe["out"].items():
-        player.add_item(item, amt)
-    player.add_xp(recipe["xp"])
-    return True, f"✅ تم تصنيع {recipe['name']}! +{recipe['xp']}XP"
+    @classmethod
+    def craft(cls, player, recipe):
+        for item, amt in recipe["in"].items():
+            if not player.has_item(item, amt):
+                return False, f"❌ تحتاج {amt} من {item}"
+        for item, amt in recipe["in"].items():
+            player.remove_item(item, amt)
+        for item, amt in recipe["out"].items():
+            player.add_item(item, amt)
+        player.add_xp(recipe["xp"])
+        return True, f"✅ تم تصنيع {recipe['name']}! +{recipe['xp']}XP"
     
     @classmethod
     def furnace_smelt(cls, player, item_name):
@@ -2897,6 +2897,7 @@ if __name__ == "__main__":
     print("🔥 Game is fully upgraded with logic!")
     print("✨ Fixed: equipment, additem, shop, trade, nether, house drawing!")
     print("✨ Fixed: Database session management with rollback!")
+    print("✨ Fixed: Crafting recipes update with player level!")
     print("="*50)
     
     Thread(target=keep_alive, daemon=True).start()
