@@ -742,23 +742,33 @@ class CraftingSystem:
     }
     
     @classmethod
-    def get_recipes(cls, player):
-        all_recipes = []
-        recipes = player.recipes_unlocked if isinstance(player.recipes_unlocked, list) else json.loads(player.recipes_unlocked or '["base"]')
-        if "base" not in recipes:
-            recipes.append("base")
-        if player.level >= 2 and "level_2" not in recipes:
-            recipes.append("level_2")
-        if player.level >= 5 and "level_3" not in recipes:
-            recipes.append("level_3")
-        if player.level >= 10 and "level_4" not in recipes:
-            recipes.append("level_4")
-        if player.level >= 15 and "level_5" not in recipes:
-            recipes.append("level_5")
-        for level in recipes:
-            if level in cls.RECIPES:
-                all_recipes.extend(cls.RECIPES[level])
-        return all_recipes
+def get_recipes(cls, player):
+    # تحديث الوصفات حسب المستوى الحالي
+    recipes = player.recipes_unlocked if isinstance(player.recipes_unlocked, list) else json.loads(player.recipes_unlocked or '["base"]')
+    
+    # تأكد من وجود base
+    if "base" not in recipes:
+        recipes.append("base")
+    
+    # أضف الوصفات حسب المستوى الحالي
+    if player.level >= 2 and "level_2" not in recipes:
+        recipes.append("level_2")
+    if player.level >= 5 and "level_3" not in recipes:
+        recipes.append("level_3")
+    if player.level >= 10 and "level_4" not in recipes:
+        recipes.append("level_4")
+    if player.level >= 15 and "level_5" not in recipes:
+        recipes.append("level_5")
+    
+    # حفظ التحديثات
+    player.recipes_unlocked = recipes
+    
+    # جلب الوصفات
+    all_recipes = []
+    for level in recipes:
+        if level in cls.RECIPES:
+            all_recipes.extend(cls.RECIPES[level])
+    return all_recipes
     
     @classmethod
     def craft(cls, player, recipe):
