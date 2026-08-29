@@ -741,16 +741,12 @@ class CraftingSystem:
         "raw_mutton": {"out": "cooked_mutton", "time": 3, "fuel": "coal", "fuel_amt": 1},
     }
     
-    @classmethod
-def get_recipes(cls, player):
-    # تحديث الوصفات حسب المستوى الحالي
+   @classmethod
+   def get_recipes(cls, player):
     recipes = player.recipes_unlocked if isinstance(player.recipes_unlocked, list) else json.loads(player.recipes_unlocked or '["base"]')
     
-    # تأكد من وجود base
     if "base" not in recipes:
         recipes.append("base")
-    
-    # أضف الوصفات حسب المستوى الحالي
     if player.level >= 2 and "level_2" not in recipes:
         recipes.append("level_2")
     if player.level >= 5 and "level_3" not in recipes:
@@ -760,27 +756,25 @@ def get_recipes(cls, player):
     if player.level >= 15 and "level_5" not in recipes:
         recipes.append("level_5")
     
-    # حفظ التحديثات
     player.recipes_unlocked = recipes
     
-    # جلب الوصفات
     all_recipes = []
     for level in recipes:
         if level in cls.RECIPES:
             all_recipes.extend(cls.RECIPES[level])
     return all_recipes
-    
-    @classmethod
-    def craft(cls, player, recipe):
-        for item, amt in recipe["in"].items():
-            if not player.has_item(item, amt):
-                return False, f"❌ تحتاج {amt} من {item}"
-        for item, amt in recipe["in"].items():
-            player.remove_item(item, amt)
-        for item, amt in recipe["out"].items():
-            player.add_item(item, amt)
-        player.add_xp(recipe["xp"])
-        return True, f"✅ تم تصنيع {recipe['name']}! +{recipe['xp']}XP"
+
+   @classmethod
+   def craft(cls, player, recipe):
+    for item, amt in recipe["in"].items():
+        if not player.has_item(item, amt):
+            return False, f"❌ تحتاج {amt} من {item}"
+    for item, amt in recipe["in"].items():
+        player.remove_item(item, amt)
+    for item, amt in recipe["out"].items():
+        player.add_item(item, amt)
+    player.add_xp(recipe["xp"])
+    return True, f"✅ تم تصنيع {recipe['name']}! +{recipe['xp']}XP"
     
     @classmethod
     def furnace_smelt(cls, player, item_name):
