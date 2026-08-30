@@ -136,41 +136,41 @@ from threading import Thread
 from flask import Flask
 
 # ===============================
-# 0. نظام البناء
+# 0. نظام البناء (مُعدل مع تحسين عرض الوقت)
 # ===============================
 
 class BuildingSystem:
     BUILDING_STAGES = {
         "foundation": {
-            "name": "🏗️ الأساس",
+            "name": "🏗️ Foundation",
             "emoji": "🏗️",
             "resources": {"stone": 10, "oak_wood": 5},
             "time": 30,
             "next": "walls"
         },
         "walls": {
-            "name": "🧱 الجدران",
+            "name": "🧱 Walls",
             "emoji": "🧱",
             "resources": {"stone": 20, "oak_wood": 10, "iron_ore": 2},
             "time": 45,
             "next": "roof"
         },
         "roof": {
-            "name": "🏠 السقف",
+            "name": "🏠 Roof",
             "emoji": "🏠",
             "resources": {"oak_wood": 15, "stone": 10, "spruce_wood": 5},
             "time": 40,
             "next": "doors"
         },
         "doors": {
-            "name": "🚪 الأبواب",
+            "name": "🚪 Doors",
             "emoji": "🚪",
             "resources": {"oak_wood": 6, "iron_ore": 2, "crafting_table": 1},
             "time": 25,
             "next": "windows"
         },
         "windows": {
-            "name": "🪟 النوافذ",
+            "name": "🪟 Windows",
             "emoji": "🪟",
             "resources": {"glass": 8, "iron_ore": 2, "stone": 4},
             "time": 35,
@@ -180,7 +180,7 @@ class BuildingSystem:
     
     HOUSE_TYPES = {
         "wooden": {
-            "name": "بيت خشبي",
+            "name": "🏠 Wooden House",
             "emoji": "🏠",
             "stages": ["foundation", "walls", "roof", "doors", "windows"],
             "resources": {
@@ -193,7 +193,7 @@ class BuildingSystem:
             "bonus": {"health": 5, "hunger": 3}
         },
         "stone": {
-            "name": "بيت حجري",
+            "name": "🏰 Stone House",
             "emoji": "🏰",
             "stages": ["foundation", "walls", "roof", "doors", "windows"],
             "resources": {
@@ -206,7 +206,7 @@ class BuildingSystem:
             "bonus": {"health": 10, "defense": 5}
         },
         "mansion": {
-            "name": "قصر فاخر",
+            "name": "🏛️ Mansion",
             "emoji": "🏛️",
             "stages": ["foundation", "walls", "roof", "doors", "windows"],
             "resources": {
@@ -261,13 +261,13 @@ class BuildingSystem:
     def can_build(self, player, house_type):
         house = self.HOUSE_TYPES.get(house_type)
         if not house:
-            return False, "❌ نوع بيت غير معروف"
+            return False, "❌ Unknown house type"
         first_stage = house["stages"][0]
         resources = house["resources"].get(first_stage, {})
         for item, amt in resources.items():
             if not player.has_item(item, amt):
-                return False, f"❌ تحتاج {amt} من {item} للمرحلة الأولى"
-        return True, "✅ يمكن البدء بالبناء"
+                return False, f"❌ You need {amt} {item} for the first stage"
+        return True, "✅ You can start building"
     
     def start_building(self, player, house_type):
         can, msg = self.can_build(player, house_type)
@@ -286,7 +286,7 @@ class BuildingSystem:
             "stages": house["stages"]
         }
         self.session.commit()
-        return True, f"🏗️ بدأت بناء {house['name']}!\nالمرحلة: {self.BUILDING_STAGES[first_stage]['name']}\n⏳ انتظر {self.BUILDING_STAGES[first_stage]['time']} ثانية"
+        return True, f"🏗️ Started building {house['name']}!\nStage: {self.BUILDING_STAGES[first_stage]['name']}\n⏳ Wait {self.BUILDING_STAGES[first_stage]['time']} seconds"
     
     def get_building_status(self, player):
         if player.user_id not in self.building_progress:
@@ -296,23 +296,34 @@ class BuildingSystem:
         stage_info = self.BUILDING_STAGES.get(current_stage)
         time_passed = (datetime.utcnow() - progress["started_at"]).total_seconds()
         time_needed = stage_info["time"]
+        
+        # حساب الوقت المتبقي بشكل دقيق
+        time_left = max(0, int(time_needed - time_passed))
+        progress_percent = min(100, int((time_passed / time_needed) * 100))
+        
+        # تحويل الوقت المتبقي إلى دقائق وثواني
+        minutes = time_left // 60
+        seconds = time_left % 60
+        time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+        
         return {
             "house_type": progress["house_type"],
             "house_name": self.HOUSE_TYPES[progress["house_type"]]["name"],
             "current_stage": current_stage,
             "stage_name": stage_info["name"],
-            "progress": min(100, int((time_passed / time_needed) * 100)),
-            "time_left": max(0, int(time_needed - time_passed)),
+            "progress": progress_percent,
+            "time_left": time_left,
+            "time_left_str": time_str,
             "is_complete": time_passed >= time_needed
         }
     
     def complete_stage(self, player):
         if player.user_id not in self.building_progress:
-            return False, "❌ لا يوجد بناء قيد التنفيذ"
+            return False, "❌ No building in progress"
         progress = self.building_progress[player.user_id]
         status = self.get_building_status(player)
         if not status["is_complete"]:
-            return False, f"⏳ انتظر {status['time_left']} ثانية لإكمال المرحلة"
+            return False, f"⏳ Wait {status['time_left']} seconds to complete this stage"
         stage_index = progress["stage_index"]
         stages = progress["stages"]
         if stage_index + 1 >= len(stages):
@@ -323,9 +334,10 @@ class BuildingSystem:
             player.strength += bonus.get("strength", 0)
             player.speed += bonus.get("speed", 0)
             player.luck += bonus.get("luck", 0)
+            player.house_type = progress["house_type"]  # حفظ نوع المنزل
             del self.building_progress[player.user_id]
             self.session.commit()
-            return True, f"🎉 اكتمل بناء {house['name']}!\n\nمكافآت:\n❤️ +{bonus.get('health', 0)} صحة\n🛡️ +{bonus.get('defense', 0)} دفاع\n🍀 +{bonus.get('luck', 0)} حظ"
+            return True, f"🎉 {house['name']} completed!\n\nRewards:\n❤️ +{bonus.get('health', 0)} Health\n🛡️ +{bonus.get('defense', 0)} Defense\n🍀 +{bonus.get('luck', 0)} Luck"
         next_stage = stages[stage_index + 1]
         progress["current_stage"] = next_stage
         progress["stage_index"] = stage_index + 1
@@ -334,11 +346,11 @@ class BuildingSystem:
         resources = house["resources"].get(next_stage, {})
         for item, amt in resources.items():
             if not player.has_item(item, amt):
-                return False, f"❌ ليس لديك موارد كافية للمرحلة التالية\nتحتاج: {item} x{amt}"
+                return False, f"❌ Not enough resources for next stage\nNeed: {item} x{amt}"
             player.remove_item(item, amt)
         stage_info = self.BUILDING_STAGES[next_stage]
         self.session.commit()
-        return True, f"✅ اكتملت {self.BUILDING_STAGES[stages[stage_index]]['name']}!\n\n🏗️ المرحلة التالية: {stage_info['name']}\n⏳ انتظر {stage_info['time']} ثانية"
+        return True, f"✅ {self.BUILDING_STAGES[stages[stage_index]]['name']} completed!\n\n🏗️ Next stage: {stage_info['name']}\n⏳ Wait {stage_info['time']} seconds"
 
 # ===============================
 # 1. قاعدة البيانات
@@ -497,17 +509,17 @@ class Player(Base):
     
     def get_time_of_day(self):
         if self.game_time < 20:
-            return "🌅 الفجر"
+            return "🌅 Dawn"
         elif self.game_time < 60:
-            return "☀️ الصباح"
+            return "☀️ Morning"
         elif self.game_time < 120:
-            return "🌤️ الظهيرة"
+            return "🌤️ Noon"
         elif self.game_time < 140:
-            return "🌅 الغروب"
+            return "🌅 Sunset"
         elif self.game_time < 180:
-            return "🌆 المساء"
+            return "🌆 Evening"
         else:
-            return "🌙 الليل"
+            return "🌙 Night"
     
     def is_night(self):
         return self.game_time >= 180
@@ -532,7 +544,7 @@ class Player(Base):
             recipes.append("level_5")
         self.recipes_unlocked = recipes
         titles = self.titles if isinstance(self.titles, list) else json.loads(self.titles or '[]')
-        titles_map = {10: "مبتدئ", 20: "مستكشف", 30: "محارب", 40: "صياد", 50: "بناء", 60: "ساحر", 70: "بطل", 80: "أسطورة"}
+        titles_map = {10: "Beginner", 20: "Explorer", 30: "Warrior", 40: "Hunter", 50: "Builder", 60: "Wizard", 70: "Hero", 80: "Legend"}
         for lvl, t in titles_map.items():
             if self.level >= lvl and t not in titles:
                 titles.append(t)
@@ -559,14 +571,14 @@ try:
         engine = create_engine(DATABASE_URL, pool_size=5, max_overflow=10, pool_pre_ping=True)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    print("✅ قاعدة بيانات متصلة بنجاح")
+    print("✅ Database connected successfully")
 except Exception as e:
-    print(f"❌ خطأ: {e}")
+    print(f"❌ Error: {e}")
     DATABASE_URL = 'sqlite:///mc.db'
     engine = create_engine(DATABASE_URL, connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    print("✅ قاعدة بيانات SQLite جاهزة")
+    print("✅ SQLite database ready")
 
 def get_player(session, user_id, username=None):
     try:
@@ -590,69 +602,69 @@ def get_player(session, user_id, username=None):
         return player, False
 
 # ===============================
-# 3. بيانات العالم
+# 3. بيانات العالم (جميع الموارد بالإنجليزية)
 # ===============================
 
 class WorldData:
     @staticmethod
     def get_trees():
         return [
-            {"name": "شجرة بلوط", "emoji": "🌳", "blocks": 8, "resources": [("oak_wood", 1)], "rare": ("apple", 1, 0.2), "break_time": 2},
-            {"name": "شجرة تنوب", "emoji": "🌲", "blocks": 10, "resources": [("spruce_wood", 1)], "rare": ("mushroom", 1, 0.2), "break_time": 2},
-            {"name": "شجرة بتولا", "emoji": "🪵", "blocks": 7, "resources": [("birch_wood", 1)], "rare": ("sap", 1, 0.15), "break_time": 2},
-            {"name": "شجرة استوائية", "emoji": "🌴", "blocks": 12, "resources": [("jungle_wood", 1)], "rare": ("tropical_fruit", 1, 0.1), "break_time": 2.5},
+            {"name": "Oak Tree", "emoji": "🌳", "blocks": 8, "resources": [("oak_wood", 1)], "rare": ("apple", 1, 0.2), "break_time": 2},
+            {"name": "Spruce Tree", "emoji": "🌲", "blocks": 10, "resources": [("spruce_wood", 1)], "rare": ("mushroom", 1, 0.2), "break_time": 2},
+            {"name": "Birch Tree", "emoji": "🪵", "blocks": 7, "resources": [("birch_wood", 1)], "rare": ("sap", 1, 0.15), "break_time": 2},
+            {"name": "Jungle Tree", "emoji": "🌴", "blocks": 12, "resources": [("jungle_wood", 1)], "rare": ("tropical_fruit", 1, 0.1), "break_time": 2.5},
         ]
     
     @staticmethod
     def get_rocks():
         return [
-            {"name": "حجر عادي", "emoji": "🪨", "blocks": 6, "resources": [("stone", 1)], "break_time": 3},
-            {"name": "حجر فحم", "emoji": "🖤", "blocks": 8, "resources": [("stone", 1), ("coal", 1)], "break_time": 3},
-            {"name": "حجر حديد", "emoji": "⛏️", "blocks": 10, "resources": [("stone", 1), ("iron_ore", 1)], "break_time": 4},
-            {"name": "حجر ذهب", "emoji": "✨", "blocks": 12, "resources": [("stone", 1), ("gold_ore", 1)], "rare": ("diamond", 1, 0.03), "break_time": 5},
-            {"name": "حجر ألماس", "emoji": "💎", "blocks": 15, "resources": [("stone", 1), ("diamond", 1)], "rare": ("emerald", 1, 0.02), "break_time": 6},
+            {"name": "Stone", "emoji": "🪨", "blocks": 6, "resources": [("stone", 1)], "break_time": 3},
+            {"name": "Coal Ore", "emoji": "🖤", "blocks": 8, "resources": [("stone", 1), ("coal", 1)], "break_time": 3},
+            {"name": "Iron Ore", "emoji": "⛏️", "blocks": 10, "resources": [("stone", 1), ("iron_ore", 1)], "break_time": 4},
+            {"name": "Gold Ore", "emoji": "✨", "blocks": 12, "resources": [("stone", 1), ("gold_ore", 1)], "rare": ("diamond", 1, 0.03), "break_time": 5},
+            {"name": "Diamond Ore", "emoji": "💎", "blocks": 15, "resources": [("stone", 1), ("diamond", 1)], "rare": ("emerald", 1, 0.02), "break_time": 6},
         ]
     
     @staticmethod
     def get_animals():
         return {
-            "بقرة 🐄": [("leather", 2), ("raw_beef", 3), ("milk", 1)],
-            "خنزير 🐷": [("raw_pork", 3), ("bone", 2)],
-            "دجاجة 🐔": [("raw_chicken", 2), ("feather", 3), ("egg", 2)],
-            "غنم 🐑": [("wool", 3), ("raw_mutton", 2)],
-            "حصان 🐴": [("saddle", 1), ("hoof", 2)],
-            "ذئب 🐺": [("bone", 2)],
-            "دب 🐻": [("bear_meat", 3), ("bear_pelt", 2)],
+            "Cow 🐄": [("leather", 2), ("raw_beef", 3), ("milk", 1)],
+            "Pig 🐷": [("raw_pork", 3), ("bone", 2)],
+            "Chicken 🐔": [("raw_chicken", 2), ("feather", 3), ("egg", 2)],
+            "Sheep 🐑": [("wool", 3), ("raw_mutton", 2)],
+            "Horse 🐴": [("saddle", 1), ("hoof", 2)],
+            "Wolf 🐺": [("bone", 2)],
+            "Bear 🐻": [("bear_meat", 3), ("bear_pelt", 2)],
         }
     
     @staticmethod
     def get_enemies(is_night=False):
         if is_night:
             return [
-                {"name": "زومبي", "emoji": "🧟", "hp": 15, "damage": 6, "xp": 12, "drops": [("rotten_flesh", 2, 0.6)]},
-                {"name": "سكلتون", "emoji": "💀", "hp": 18, "damage": 8, "xp": 15, "drops": [("bone", 3, 0.7), ("arrow", 3, 0.5)]},
-                {"name": "كريبر", "emoji": "💚", "hp": 22, "damage": 14, "xp": 22, "drops": [("gunpowder", 3, 0.8)], "special": "explode"},
-                {"name": "زومبي حديدي", "emoji": "🧟‍♂️", "hp": 25, "damage": 10, "xp": 18, "drops": [("iron_ore", 2, 0.4)]},
-                {"name": "غول", "emoji": "👹", "hp": 35, "damage": 16, "xp": 30, "drops": [("gold_ore", 3, 0.5), ("diamond", 1, 0.15)]},
+                {"name": "Zombie", "emoji": "🧟", "hp": 15, "damage": 6, "xp": 12, "drops": [("rotten_flesh", 2, 0.6)]},
+                {"name": "Skeleton", "emoji": "💀", "hp": 18, "damage": 8, "xp": 15, "drops": [("bone", 3, 0.7), ("arrow", 3, 0.5)]},
+                {"name": "Creeper", "emoji": "💚", "hp": 22, "damage": 14, "xp": 22, "drops": [("gunpowder", 3, 0.8)], "special": "explode"},
+                {"name": "Iron Zombie", "emoji": "🧟‍♂️", "hp": 25, "damage": 10, "xp": 18, "drops": [("iron_ore", 2, 0.4)]},
+                {"name": "Ghoul", "emoji": "👹", "hp": 35, "damage": 16, "xp": 30, "drops": [("gold_ore", 3, 0.5), ("diamond", 1, 0.15)]},
             ]
         else:
             return [
-                {"name": "ذئب", "emoji": "🐺", "hp": 10, "damage": 4, "xp": 6, "drops": [("bone", 2, 0.5)], "special": "tameable"},
-                {"name": "دب", "emoji": "🐻", "hp": 25, "damage": 9, "xp": 18, "drops": [("bear_meat", 2, 0.8), ("bear_pelt", 1, 0.4)]},
-                {"name": "عنكبوت", "emoji": "🕷️", "hp": 12, "damage": 5, "xp": 8, "drops": [("spider_silk", 2, 0.5), ("spider_eye", 1, 0.3)]},
+                {"name": "Wolf", "emoji": "🐺", "hp": 10, "damage": 4, "xp": 6, "drops": [("bone", 2, 0.5)], "special": "tameable"},
+                {"name": "Bear", "emoji": "🐻", "hp": 25, "damage": 9, "xp": 18, "drops": [("bear_meat", 2, 0.8), ("bear_pelt", 1, 0.4)]},
+                {"name": "Spider", "emoji": "🕷️", "hp": 12, "damage": 5, "xp": 8, "drops": [("spider_silk", 2, 0.5), ("spider_eye", 1, 0.3)]},
             ]
     
     @staticmethod
     def get_random_event(is_night):
         if is_night:
             events = [
-                {"type": "loot", "msg": "🌙 وجدت صندوقاً في الظلام!", "item": random.choice(["coal", "iron_ore", "gold_ore"]), "amount": random.randint(2, 4)},
-                {"type": "loot", "msg": "🕯️ شعلة مشتعلة!", "item": "torch", "amount": random.randint(4, 8)},
+                {"type": "loot", "msg": "🌙 Found a chest in the dark!", "item": random.choice(["coal", "iron_ore", "gold_ore"]), "amount": random.randint(2, 4)},
+                {"type": "loot", "msg": "🕯️ A lit torch!", "item": "torch", "amount": random.randint(4, 8)},
             ]
         else:
             events = [
-                {"type": "loot", "msg": "🎁 وجدت هدية على الأرض!", "item": random.choice(["apple", "bread", "coal", "feather"]), "amount": random.randint(2, 4)},
-                {"type": "loot", "msg": "🍯 خلية نحل!", "item": "honey", "amount": random.randint(3, 6)},
+                {"type": "loot", "msg": "🎁 Found a gift on the ground!", "item": random.choice(["apple", "bread", "coal", "feather"]), "amount": random.randint(2, 4)},
+                {"type": "loot", "msg": "🍯 A beehive!", "item": "honey", "amount": random.randint(3, 6)},
             ]
         return random.choice(events) if random.random() < 0.25 else None
     
@@ -660,15 +672,15 @@ class WorldData:
     def get_temple_events():
         return {
             "puzzles": [
-                {"q": "ما هو الشيء الذي يمشي بلا أرجل ويطير بلا أجنحة؟", "a": "الوقت", "reward": "apple", "amount": 5},
-                {"q": "ما هو الشيء الذي كلما زاد نقص؟", "a": "العمر", "reward": "gold_ore", "amount": 2},
-                {"q": "ما هو الشيء الذي له عين ولا يرى؟", "a": "الإبرة", "reward": "diamond", "amount": 1},
-                {"q": "ما هو الشيء الذي يأكل ولا يشبع؟", "a": "النار", "reward": "coal", "amount": 8},
+                {"q": "What walks on four legs in the morning, two in the afternoon, and three in the evening?", "a": "man", "reward": "apple", "amount": 5},
+                {"q": "I speak without a mouth and hear without ears. I have no body, but I come alive with wind. What am I?", "a": "echo", "reward": "gold_ore", "amount": 2},
+                {"q": "I have cities, but no houses. I have mountains, but no trees. I have water, but no fish. What am I?", "a": "map", "reward": "diamond", "amount": 1},
+                {"q": "What has keys but can't open locks?", "a": "piano", "reward": "coal", "amount": 8},
             ],
             "monsters": [
-                {"name": "حارس المعبد", "emoji": "🗿", "hp": 40, "damage": 12, "xp": 35, "drops": [("gold_ore", 5, 0.8), ("diamond", 2, 0.3)]},
-                {"name": "عفريت المعبد", "emoji": "👿", "hp": 30, "damage": 15, "xp": 28, "drops": [("emerald", 3, 0.5), ("gold_ore", 4, 0.6)]},
-                {"name": "تنين صغير", "emoji": "🐉", "hp": 50, "damage": 18, "xp": 45, "drops": [("diamond", 3, 0.4), ("gold_ore", 8, 0.7)]},
+                {"name": "Temple Guardian", "emoji": "🗿", "hp": 40, "damage": 12, "xp": 35, "drops": [("gold_ore", 5, 0.8), ("diamond", 2, 0.3)]},
+                {"name": "Temple Demon", "emoji": "👿", "hp": 30, "damage": 15, "xp": 28, "drops": [("emerald", 3, 0.5), ("gold_ore", 4, 0.6)]},
+                {"name": "Baby Dragon", "emoji": "🐉", "hp": 50, "damage": 18, "xp": 45, "drops": [("diamond", 3, 0.4), ("gold_ore", 8, 0.7)]},
             ],
             "treasures": [
                 {"item": "diamond", "amount": 3},
@@ -685,49 +697,49 @@ class WorldData:
 class CraftingSystem:
     RECIPES = {
         "base": [
-            {"name": "ألواح خشب", "emoji": "🪵", "in": {"oak_wood": 1}, "out": {"wooden_planks": 4}, "xp": 1},
-            {"name": "عصي", "emoji": "🥢", "in": {"wooden_planks": 2}, "out": {"sticks": 4}, "xp": 1},
-            {"name": "طاولة تصنيع", "emoji": "🔨", "in": {"wooden_planks": 4}, "out": {"crafting_table": 1}, "xp": 2},
-            {"name": "فرن", "emoji": "🔥", "in": {"stone": 8}, "out": {"furnace": 1}, "xp": 2},
+            {"name": "Wooden Planks", "emoji": "🪵", "in": {"oak_wood": 1}, "out": {"wooden_planks": 4}, "xp": 1},
+            {"name": "Sticks", "emoji": "🥢", "in": {"wooden_planks": 2}, "out": {"sticks": 4}, "xp": 1},
+            {"name": "Crafting Table", "emoji": "🔨", "in": {"wooden_planks": 4}, "out": {"crafting_table": 1}, "xp": 2},
+            {"name": "Furnace", "emoji": "🔥", "in": {"stone": 8}, "out": {"furnace": 1}, "xp": 2},
         ],
         "level_2": [
-            {"name": "فأس خشبي", "emoji": "🪓", "in": {"wooden_planks": 3, "sticks": 2}, "out": {"wooden_axe": 1}, "xp": 3},
-            {"name": "سيف خشبي", "emoji": "🗡️", "in": {"wooden_planks": 2, "sticks": 1}, "out": {"wooden_sword": 1}, "xp": 3},
-            {"name": "سياج", "emoji": "🚧", "in": {"sticks": 6}, "out": {"fence": 3}, "xp": 1},
-            {"name": "باب خشبي", "emoji": "🚪", "in": {"wooden_planks": 6}, "out": {"wooden_door": 1}, "xp": 2},
-            {"name": "خوذة خشبية", "emoji": "🪖", "in": {"wooden_planks": 5}, "out": {"wooden_helmet": 1}, "xp": 3},
-            {"name": "صدرية خشبية", "emoji": "👕", "in": {"wooden_planks": 8}, "out": {"wooden_chestplate": 1}, "xp": 4},
+            {"name": "Wooden Axe", "emoji": "🪓", "in": {"wooden_planks": 3, "sticks": 2}, "out": {"wooden_axe": 1}, "xp": 3},
+            {"name": "Wooden Sword", "emoji": "🗡️", "in": {"wooden_planks": 2, "sticks": 1}, "out": {"wooden_sword": 1}, "xp": 3},
+            {"name": "Fence", "emoji": "🚧", "in": {"sticks": 6}, "out": {"fence": 3}, "xp": 1},
+            {"name": "Wooden Door", "emoji": "🚪", "in": {"wooden_planks": 6}, "out": {"wooden_door": 1}, "xp": 2},
+            {"name": "Wooden Helmet", "emoji": "🪖", "in": {"wooden_planks": 5}, "out": {"wooden_helmet": 1}, "xp": 3},
+            {"name": "Wooden Chestplate", "emoji": "👕", "in": {"wooden_planks": 8}, "out": {"wooden_chestplate": 1}, "xp": 4},
         ],
         "level_3": [
-            {"name": "فأس حجري", "emoji": "🪓", "in": {"stone": 3, "sticks": 2}, "out": {"stone_axe": 1}, "xp": 5},
-            {"name": "سيف حجري", "emoji": "🗡️", "in": {"stone": 2, "sticks": 1}, "out": {"stone_sword": 1}, "xp": 5},
-            {"name": "معول حجري", "emoji": "⛏️", "in": {"stone": 3, "sticks": 2}, "out": {"stone_pickaxe": 1}, "xp": 5},
-            {"name": "خوذة حجرية", "emoji": "🪖", "in": {"stone": 5}, "out": {"stone_helmet": 1}, "xp": 5},
-            {"name": "صدرية حجرية", "emoji": "👕", "in": {"stone": 8}, "out": {"stone_chestplate": 1}, "xp": 6},
-            {"name": "خبز", "emoji": "🍞", "in": {"wheat": 3}, "out": {"bread": 1}, "xp": 2},
+            {"name": "Stone Axe", "emoji": "🪓", "in": {"stone": 3, "sticks": 2}, "out": {"stone_axe": 1}, "xp": 5},
+            {"name": "Stone Sword", "emoji": "🗡️", "in": {"stone": 2, "sticks": 1}, "out": {"stone_sword": 1}, "xp": 5},
+            {"name": "Stone Pickaxe", "emoji": "⛏️", "in": {"stone": 3, "sticks": 2}, "out": {"stone_pickaxe": 1}, "xp": 5},
+            {"name": "Stone Helmet", "emoji": "🪖", "in": {"stone": 5}, "out": {"stone_helmet": 1}, "xp": 5},
+            {"name": "Stone Chestplate", "emoji": "👕", "in": {"stone": 8}, "out": {"stone_chestplate": 1}, "xp": 6},
+            {"name": "Bread", "emoji": "🍞", "in": {"wheat": 3}, "out": {"bread": 1}, "xp": 2},
         ],
         "level_4": [
-            {"name": "معول حديدي", "emoji": "⛏️", "in": {"iron_ore": 3, "sticks": 2}, "out": {"iron_pickaxe": 1}, "xp": 7},
-            {"name": "سيف حديدي", "emoji": "🗡️", "in": {"iron_ore": 2, "sticks": 1}, "out": {"iron_sword": 1}, "xp": 8},
-            {"name": "خوذة حديدية", "emoji": "🪖", "in": {"iron_ore": 5}, "out": {"iron_helmet": 1}, "xp": 8},
-            {"name": "صدرية حديدية", "emoji": "👕", "in": {"iron_ore": 8}, "out": {"iron_chestplate": 1}, "xp": 10},
-            {"name": "بنطلون حديدي", "emoji": "👖", "in": {"iron_ore": 7}, "out": {"iron_leggings": 1}, "xp": 9},
-            {"name": "حذاء حديدي", "emoji": "👢", "in": {"iron_ore": 4}, "out": {"iron_boots": 1}, "xp": 7},
-            {"name": "قوس", "emoji": "🏹", "in": {"sticks": 3, "spider_silk": 3}, "out": {"bow": 1}, "xp": 4},
-            {"name": "جرعة شفاء", "emoji": "🧪", "in": {"sap": 2, "mushroom": 1}, "out": {"healing_potion": 1}, "xp": 8},
+            {"name": "Iron Pickaxe", "emoji": "⛏️", "in": {"iron_ore": 3, "sticks": 2}, "out": {"iron_pickaxe": 1}, "xp": 7},
+            {"name": "Iron Sword", "emoji": "🗡️", "in": {"iron_ore": 2, "sticks": 1}, "out": {"iron_sword": 1}, "xp": 8},
+            {"name": "Iron Helmet", "emoji": "🪖", "in": {"iron_ore": 5}, "out": {"iron_helmet": 1}, "xp": 8},
+            {"name": "Iron Chestplate", "emoji": "👕", "in": {"iron_ore": 8}, "out": {"iron_chestplate": 1}, "xp": 10},
+            {"name": "Iron Leggings", "emoji": "👖", "in": {"iron_ore": 7}, "out": {"iron_leggings": 1}, "xp": 9},
+            {"name": "Iron Boots", "emoji": "👢", "in": {"iron_ore": 4}, "out": {"iron_boots": 1}, "xp": 7},
+            {"name": "Bow", "emoji": "🏹", "in": {"sticks": 3, "spider_silk": 3}, "out": {"bow": 1}, "xp": 4},
+            {"name": "Healing Potion", "emoji": "🧪", "in": {"sap": 2, "mushroom": 1}, "out": {"healing_potion": 1}, "xp": 8},
         ],
         "level_5": [
-            {"name": "فأس ألماسي", "emoji": "🪓", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_axe": 1}, "xp": 12},
-            {"name": "سيف ألماسي", "emoji": "🗡️", "in": {"diamond": 2, "sticks": 1}, "out": {"diamond_sword": 1}, "xp": 15},
-            {"name": "معول ألماسي", "emoji": "⛏️", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_pickaxe": 1}, "xp": 12},
-            {"name": "درع ناري", "emoji": "🔥", "in": {"fiery_coal": 5, "iron_ore": 8}, "out": {"fire_chestplate": 1}, "xp": 18},
-            {"name": "عين الإندر", "emoji": "👁️", "in": {"ender_pearl": 1, "blaze_rod": 1}, "out": {"eye_of_ender": 1}, "xp": 10},
-            {"name": "جناح طيران", "emoji": "🪽", "in": {"diamond": 1, "feather": 10}, "out": {"elytra": 1}, "xp": 25},
-            {"name": "تفاح ذهبي", "emoji": "🍎", "in": {"apple": 1, "gold_ore": 8}, "out": {"golden_apple": 1}, "xp": 15},
-            {"name": "خوذة ألماسية", "emoji": "🪖", "in": {"diamond": 5}, "out": {"diamond_helmet": 1}, "xp": 15},
-            {"name": "صدرية ألماسية", "emoji": "👕", "in": {"diamond": 8}, "out": {"diamond_chestplate": 1}, "xp": 18},
-            {"name": "بنطلون ألماسي", "emoji": "👖", "in": {"diamond": 7}, "out": {"diamond_leggings": 1}, "xp": 16},
-            {"name": "حذاء ألماسي", "emoji": "👢", "in": {"diamond": 4}, "out": {"diamond_boots": 1}, "xp": 14},
+            {"name": "Diamond Axe", "emoji": "🪓", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_axe": 1}, "xp": 12},
+            {"name": "Diamond Sword", "emoji": "🗡️", "in": {"diamond": 2, "sticks": 1}, "out": {"diamond_sword": 1}, "xp": 15},
+            {"name": "Diamond Pickaxe", "emoji": "⛏️", "in": {"diamond": 3, "sticks": 2}, "out": {"diamond_pickaxe": 1}, "xp": 12},
+            {"name": "Fire Chestplate", "emoji": "🔥", "in": {"fiery_coal": 5, "iron_ore": 8}, "out": {"fire_chestplate": 1}, "xp": 18},
+            {"name": "Eye of Ender", "emoji": "👁️", "in": {"ender_pearl": 1, "blaze_rod": 1}, "out": {"eye_of_ender": 1}, "xp": 10},
+            {"name": "Elytra", "emoji": "🪽", "in": {"diamond": 1, "feather": 10}, "out": {"elytra": 1}, "xp": 25},
+            {"name": "Golden Apple", "emoji": "🍎", "in": {"apple": 1, "gold_ore": 8}, "out": {"golden_apple": 1}, "xp": 15},
+            {"name": "Diamond Helmet", "emoji": "🪖", "in": {"diamond": 5}, "out": {"diamond_helmet": 1}, "xp": 15},
+            {"name": "Diamond Chestplate", "emoji": "👕", "in": {"diamond": 8}, "out": {"diamond_chestplate": 1}, "xp": 18},
+            {"name": "Diamond Leggings", "emoji": "👖", "in": {"diamond": 7}, "out": {"diamond_leggings": 1}, "xp": 16},
+            {"name": "Diamond Boots", "emoji": "👢", "in": {"diamond": 4}, "out": {"diamond_boots": 1}, "xp": 14},
         ]
     }
     
@@ -768,30 +780,30 @@ class CraftingSystem:
     def craft(cls, player, recipe):
         for item, amt in recipe["in"].items():
             if not player.has_item(item, amt):
-                return False, f"❌ تحتاج {amt} من {item}"
+                return False, f"❌ You need {amt} {item}"
         for item, amt in recipe["in"].items():
             player.remove_item(item, amt)
         for item, amt in recipe["out"].items():
             player.add_item(item, amt)
         player.add_xp(recipe["xp"])
-        return True, f"✅ تم تصنيع {recipe['name']}! +{recipe['xp']}XP"
+        return True, f"✅ Crafted {recipe['name']}! +{recipe['xp']}XP"
     
     @classmethod
     def furnace_smelt(cls, player, item_name):
         if item_name not in cls.FURNACE_RECIPES:
-            return False, "❌ هذا العنصر لا يمكن صهره"
+            return False, "❌ This item cannot be smelted"
         if not player.has_item("furnace"):
-            return False, "❌ تحتاج فرن للصهر!"
+            return False, "❌ You need a furnace!"
         recipe = cls.FURNACE_RECIPES[item_name]
         if not player.has_item(item_name):
-            return False, f"❌ ليس لديك {item_name}"
+            return False, f"❌ You don't have {item_name}"
         if not player.has_item(recipe["fuel"], recipe["fuel_amt"]):
-            return False, f"❌ تحتاج {recipe['fuel']} x{recipe['fuel_amt']} كوقود"
+            return False, f"❌ You need {recipe['fuel']} x{recipe['fuel_amt']} as fuel"
         player.remove_item(item_name, 1)
         player.remove_item(recipe["fuel"], recipe["fuel_amt"])
         player.add_item(recipe["out"], 1)
         player.add_xp(3)
-        return True, f"🔥 تم صهر {item_name} ← {recipe['out']}! +3XP"
+        return True, f"🔥 Smelted {item_name} → {recipe['out']}! +3XP"
 
 # ===============================
 # 5. نظام اللعبة (مُعدل)
@@ -893,7 +905,7 @@ class GameMechanics:
         player.current_hunger = max(0, player.current_hunger - hunger_cost)
         if random.random() < 0.08 and not has_axe:
             player.current_health = max(0, player.current_health - 2)
-            rewards.append("💔 جرحت يدك!")
+            rewards.append("💔 You hurt your hand!")
         if player.current_hunger <= 0:
             player.current_health = max(0, player.current_health - 3)
         xp_reward = 2 if player.is_night() else 1
@@ -908,7 +920,7 @@ class GameMechanics:
         weapon = eq.get("weapon")
         has_pickaxe = self.is_valid_pickaxe(weapon)
         if not has_pickaxe:
-            return {"rewards": ["❌ تحتاج معولاً لتكسير الحجر!"], "hunger": player.current_hunger, "health": player.current_health, "xp": 0, "failed": True}
+            return {"rewards": ["❌ You need a pickaxe to break stone!"], "hunger": player.current_hunger, "health": player.current_health, "xp": 0, "failed": True}
         resource_multiplier = max(0.4, 1 - (player.level * 0.01))
         rewards = []
         for res, amt in rock["resources"]:
@@ -926,7 +938,7 @@ class GameMechanics:
         player.current_hunger = max(0, player.current_hunger - hunger_cost)
         if random.random() < 0.08:
             player.current_health = max(0, player.current_health - 2)
-            rewards.append("💔 أصبت نفسك!")
+            rewards.append("💔 You hurt yourself!")
         if player.current_hunger <= 0:
             player.current_health = max(0, player.current_health - 3)
         xp_reward = 2 if player.is_night() else 1
@@ -938,10 +950,10 @@ class GameMechanics:
         eq = player.get_equip()
         weapon = eq.get("weapon")
         if not weapon or not self.is_combat_weapon(weapon):
-            return {"error": "❌ تحتاج سيفاً أو قوساً للصيد!\nاستخدم /equip iron_sword"}
+            return {"error": "❌ You need a sword or bow to hunt!\nUse /equip iron_sword"}
         loot = WorldData.get_animals().get(animal_name)
         if not loot:
-            return {"error": "حيوان غير معروف"}
+            return {"error": "Unknown animal"}
         rewards = []
         for res, amt in loot:
             if random.random() < 0.2:
@@ -955,7 +967,7 @@ class GameMechanics:
         player.current_hunger = max(0, player.current_hunger - hunger_cost)
         if random.random() < 0.15:
             player.current_health = max(0, player.current_health - 3)
-            rewards.append("💔 جرحك الحيوان!")
+            rewards.append("💔 The animal hurt you!")
         xp_reward = 5 if player.is_night() else 3
         if "diamond" in weapon:
             xp_reward += 2
@@ -1013,9 +1025,9 @@ class GameMechanics:
             "raw_beef": 2, "raw_chicken": 1, "cooked_chicken": 6, "cooked_pork": 7, "cooked_mutton": 6
         }
         if food not in food_db:
-            return {"error": "طعام غير معروف"}
+            return {"error": "Unknown food"}
         if not player.has_item(food):
-            return {"error": "لا تملك هذا الطعام"}
+            return {"error": "You don't have this food"}
         player.remove_item(food)
         val = food_db[food]
         if player.is_night():
@@ -1024,9 +1036,9 @@ class GameMechanics:
         effects = []
         if food == "golden_apple":
             player.current_health = min(player.max_health, player.current_health + 6)
-            effects.append("💚 تفاح ذهبي يشفي!")
+            effects.append("💚 Golden apple heals you!")
         if "raw" in food and random.random() < 0.3:
-            effects.append("⚠️ تسمم غذائي")
+            effects.append("⚠️ Food poisoning")
             player.current_health = max(0, player.current_health - 3)
         self.session.commit()
         return {"food": food, "hunger": val, "current": player.current_hunger, "effects": effects}
@@ -1034,13 +1046,13 @@ class GameMechanics:
     def sleep(self, player):
         if not player.can_sleep():
             left = 12 - (datetime.utcnow() - player.last_sleep).seconds // 3600
-            return {"error": f"⏳ انتظر {left} ساعات"}
+            return {"error": f"⏳ Wait {left} hours"}
         player.current_health = player.max_health
         player.current_hunger = player.max_hunger
         player.last_sleep = datetime.utcnow()
         player.game_time = 0
         self.session.commit()
-        return {"msg": "😴 نمت جيداً!", "hp": player.current_health, "hunger": player.current_hunger}
+        return {"msg": "😴 You slept well!", "hp": player.current_health, "hunger": player.current_hunger}
 
 # ===============================
 # 6. نظام القتال
@@ -1055,7 +1067,7 @@ class BattleSystem:
             'player_hp': player.current_health, 'player_max_hp': player.max_health,
             'enemy_hp': enemy['hp'], 'enemy_max_hp': enemy['hp'],
             'enemy': enemy, 'round': 0,
-            'log': [f"⚔️ بدأ القتال مع {enemy['emoji']} {enemy['name']}!"],
+            'log': [f"⚔️ Battle started with {enemy['emoji']} {enemy['name']}!"],
             'player_defending': False, 'is_night': player.is_night(),
         }
     
@@ -1070,18 +1082,18 @@ class BattleSystem:
             base_damage = int(base_damage * 0.8)
         if random.random() < 0.15 + (player.luck / 100):
             base_damage *= 2
-            battle_data['log'].append("💥 ضربة حاسمة!")
+            battle_data['log'].append("💥 Critical hit!")
         enemy_defense = random.randint(0, 2)
         final_damage = max(1, base_damage - enemy_defense)
         battle_data['enemy_hp'] = max(0, battle_data['enemy_hp'] - final_damage)
-        battle_data['log'].append(f"🗡️ ضربت {enemy['name']} بـ {final_damage} ضرر")
+        battle_data['log'].append(f"🗡️ You hit {enemy['name']} for {final_damage} damage")
         battle_data['player_defending'] = False
         return battle_data
     
     def player_defend(self, player, battle_data):
         shield = 5 if not battle_data['is_night'] else 3
         battle_data['player_defending'] = True
-        battle_data['log'].append(f"🛡️ استعددت للدفاع (+{shield} درع)")
+        battle_data['log'].append(f"🛡️ You prepared to defend (+{shield} armor)")
         return battle_data
     
     def enemy_turn(self, player, battle_data):
@@ -1099,13 +1111,13 @@ class BattleSystem:
             enemy_damage = int(enemy_damage * (1 + battle_data['round'] * 0.05))
         if enemy.get('special') == 'explode' and random.random() < 0.3:
             enemy_damage *= 2
-            battle_data['log'].append(f"💥 {enemy['name']} انفجر!")
+            battle_data['log'].append(f"💥 {enemy['name']} exploded!")
         final_damage = max(0, enemy_damage - player_defense)
         if final_damage > 0:
             battle_data['player_hp'] = max(0, battle_data['player_hp'] - final_damage)
-            battle_data['log'].append(f"💢 {enemy['name']} ضربك بـ {final_damage} ضرر")
+            battle_data['log'].append(f"💢 {enemy['name']} hit you for {final_damage} damage")
         else:
-            battle_data['log'].append(f"🛡️ تصديت لهجوم {enemy['name']}!")
+            battle_data['log'].append(f"🛡️ You blocked {enemy['name']}'s attack!")
         return battle_data
     
     def try_escape(self, player, battle_data):
@@ -1116,10 +1128,10 @@ class BattleSystem:
             chance -= battle_data['round'] * 3
         chance = max(10, min(80, chance))
         if random.random() * 100 < chance:
-            battle_data['log'].append("🏃 هربت بنجاح!")
+            battle_data['log'].append("🏃 You escaped successfully!")
             return True, battle_data
         else:
-            battle_data['log'].append("🚫 فشلت في الهروب!")
+            battle_data['log'].append("🚫 Failed to escape!")
             return False, battle_data
     
     def check_win(self, player, battle_data):
@@ -1140,14 +1152,14 @@ class BattleSystem:
                     total = amt + bonus
                     player.add_item(item, total)
                     drops_text.append(f"{item} x{total}")
-            battle_data['log'].append(f"🎉 انتصرت على {enemy['name']}!")
+            battle_data['log'].append(f"🎉 You defeated {enemy['name']}!")
             battle_data['log'].append(f"⭐ +{xp_reward} XP")
             if drops_text:
                 battle_data['log'].append(f"📦 {', '.join(drops_text)}")
             self.session.commit()
             return 'win', battle_data
         if battle_data['player_hp'] <= 0:
-            battle_data['log'].append("💀 لقد مت!")
+            battle_data['log'].append("💀 You died!")
             return 'dead', battle_data
         return None, battle_data
 
@@ -1163,7 +1175,7 @@ class TempleSystem:
     def enter_temple(self, player):
         if player.temple_cooldown and (datetime.utcnow() - player.temple_cooldown).total_seconds() < 3600:
             remaining = int(3600 - (datetime.utcnow() - player.temple_cooldown).total_seconds())
-            return False, f"⏳ المعبد مغلق! انتظر {remaining//60} دقيقة"
+            return False, f"⏳ Temple is closed! Wait {remaining//60} minutes"
         events = WorldData.get_temple_events()
         choice = random.random()
         if choice < 0.3:
@@ -1180,12 +1192,12 @@ class TempleSystem:
             player.temples_visited = (player.temples_visited or 0) + 1
             player.temple_cooldown = datetime.utcnow()
             self.session.commit()
-            return True, f"✅ إجابة صحيحة! حصلت على {puzzle['reward']} x{puzzle['amount']} +10XP"
+            return True, f"✅ Correct answer! You got {puzzle['reward']} x{puzzle['amount']} +10XP"
         else:
             damage = random.randint(3, 8)
             player.current_health = max(0, player.current_health - damage)
             self.session.commit()
-            return False, f"❌ إجابة خاطئة! تأذيت بـ {damage} ضرر"
+            return False, f"❌ Wrong answer! You took {damage} damage"
     
     def get_temple_reward(self, player, treasure):
         player.add_item(treasure["item"], treasure["amount"])
@@ -1193,18 +1205,18 @@ class TempleSystem:
         player.temples_visited = (player.temples_visited or 0) + 1
         player.temple_cooldown = datetime.utcnow()
         self.session.commit()
-        return f"🎁 وجدت كنزاً! {treasure['item']} x{treasure['amount']} +15XP"
+        return f"🎁 You found treasure! {treasure['item']} x{treasure['amount']} +15XP"
     
     def get_temple_menu(self):
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(
-            types.InlineKeyboardButton("🔍 استكشاف", callback_data="temple_explore"),
-            types.InlineKeyboardButton("🚪 خروج", callback_data="temple_leave")
+            types.InlineKeyboardButton("🔍 Explore", callback_data="temple_explore"),
+            types.InlineKeyboardButton("🚪 Leave", callback_data="temple_leave")
         )
         return kb
 
 # ===============================
-# 8. نظام التنين
+# 8. نظام التنين المتطور 🐉🔥
 # ===============================
 
 class EnderDragonSystem:
@@ -1212,90 +1224,494 @@ class EnderDragonSystem:
         self.session = session
         self.dragon_active = False
         self.dragon_hp = 0
-        self.dragon_max_hp = 100
+        self.dragon_max_hp = 300  # 🔥 أقوى بــ 3 مرات
         self.fighters = {}
         self.dragon_spawn_time = None
+        self.max_fighters = 3  # 👈 حد أقصى 3 مقاتلين
+        
+        # 🗼 نظام الأبراج
+        self.towers = {
+            1: {"name": "Fire Tower", "emoji": "🔥", "hp": 50, "max_hp": 50, "active": True},
+            2: {"name": "Ice Tower", "emoji": "❄️", "hp": 50, "max_hp": 50, "active": True},
+            3: {"name": "Lightning Tower", "emoji": "⚡", "hp": 50, "max_hp": 50, "active": True},
+            4: {"name": "Dark Tower", "emoji": "🌑", "hp": 50, "max_hp": 50, "active": True},
+        }
+        self.towers_destroyed = 0
+        self.combo_system = {}
+        self.battle_phrases = [
+            "⚔️ **Victory awaits!**",
+            "🔥 **Unleash your power!**",
+            "💥 **Crush the dragon!**",
+            "🛡️ **Stand your ground!**",
+            "⭐ **This is your moment!**",
+            "🌊 **Like a tsunami of power!**",
+            "⚡ **Strike like lightning!**",
+            "🦅 **Soar high!**",
+            "🏹 **Bullseye!**",
+            "🗡️ **Sword of justice!**",
+        ]
     
     def can_fight_dragon(self, player):
         if player.level < 20:
-            return False, "❌ تحتاج مستوى 20 لمواجهة التنين!"
+            return False, "❌ You need level 20 to fight the dragon!"
         if not player.has_item("eye_of_ender", 3):
-            return False, "❌ تحتاج 3 عيون إندر لفتح البوابة!"
-        if not player.has_item("diamond_sword"):
-            return False, "❌ تحتاج سيفاً ألماسياً لمواجهة التنين!"
+            return False, "❌ You need 3 Eyes of Ender to open the portal!"
+        
+        # ✅ التحقق من السيف الألماسي (مخزون أو مجهز)
+        has_sword = player.has_item("diamond_sword")
+        if not has_sword:
+            eq = player.get_equip()
+            if eq.get("weapon") == "diamond_sword":
+                has_sword = True
+            elif eq.get("weapon") and "diamond_sword" in eq.get("weapon"):
+                has_sword = True
+        
+        if not has_sword:
+            return False, "❌ You need a diamond sword to fight the dragon!\n💡 Make sure you have it in inventory or equip it with /equip diamond_sword"
+        
         if not player.has_item("bow"):
-            return False, "❌ تحتاج قوساً لمواجهة التنين!"
+            return False, "❌ You need a bow to fight the dragon!"
+        
+        # التحقق من وجود سهام
+        if not player.has_item("arrow", 1):
+            return False, "❌ You need at least one arrow for the bow!"
+        
         if player.defeated_ender_dragon:
-            return False, "✅ لقد هزمت التنين بالفعل!"
-        return True, "✅ جاهز لمواجهة التنين!"
+            return False, "✅ You already defeated the dragon! 🏆"
+        
+        if len(self.fighters) >= self.max_fighters:
+            return False, f"❌ Battle is full! Maximum {self.max_fighters} fighters"
+        
+        return True, "✅ Ready to fight the dragon!"
+    
+    def get_tower_animation(self):
+        """رسم الأبراج بشكل متحرك"""
+        tower_lines = []
+        for i in range(1, 5):
+            tower = self.towers[i]
+            if tower["active"]:
+                hp_percent = (tower["hp"] / tower["max_hp"]) * 100
+                if hp_percent > 70:
+                    state = "🟩🟩🟩🟩🟩"
+                elif hp_percent > 40:
+                    state = "🟨🟨🟨⬜⬜"
+                elif hp_percent > 10:
+                    state = "🟧🟧⬜⬜⬜"
+                else:
+                    state = "🟥⬜⬜⬜⬜"
+                tower_lines.append(f"{tower['emoji']} {tower['name']}: {state} {int(hp_percent)}%")
+            else:
+                tower_lines.append(f"{tower['emoji']} {tower['name']}: 💥 Destroyed!")
+        return "\n".join(tower_lines)
     
     def start_dragon_fight(self, player):
         can, msg = self.can_fight_dragon(player)
         if not can:
             return False, msg
+        
+        # إزالة السيف من المخزون إذا كان موجود
+        if player.has_item("diamond_sword"):
+            player.remove_item("diamond_sword", 1)
+        
         player.remove_item("eye_of_ender", 3)
-        self.dragon_active = True
-        self.dragon_hp = self.dragon_max_hp
-        self.dragon_spawn_time = datetime.utcnow()
-        self.fighters[player.user_id] = {"damage_dealt": 0, "joined_at": datetime.utcnow()}
+        
+        # تفعيل التنين
+        if not self.dragon_active:
+            self.dragon_active = True
+            self.dragon_hp = self.dragon_max_hp
+            self.dragon_spawn_time = datetime.utcnow()
+            self.towers_destroyed = 0
+            # إعادة تعيين الأبراج
+            for tower in self.towers.values():
+                tower["hp"] = tower["max_hp"]
+                tower["active"] = True
+            self.fighters = {}
+        
+        # إضافة المقاتل
+        self.fighters[player.user_id] = {
+            "damage_dealt": 0,
+            "joined_at": datetime.utcnow(),
+            "combo": 0
+        }
+        
         self.session.commit()
-        return True, f"""🐉 تنين الإندر يظهر!
+        
+        # إشعار
+        self.broadcast_to_fighters(f"⚔️ **{player.username} joined the battle!** ({len(self.fighters)}/{self.max_fighters})")
+        
+        towers_art = self.get_tower_animation()
+        
+        return True, f"""🐉 **The Ender Dragon appears!**
 
-❤️ الصحة: {self.dragon_hp}/{self.dragon_max_hp}
-⚔️ استخدم /dragon_attack للهجوم
-🛡️ استخدم /dragon_defend للدفاع
-🏃 استخدم /dragon_run للهروب
+❤️ Health: {self.dragon_hp}/{self.dragon_max_hp}
+🗼 **Towers:**
+{towers_art}
+👥 Fighters: {len(self.fighters)}/{self.max_fighters}
 
-⚠️ التنين قوي جداً! تأكد من تجهيزاتك!"""
+⚔️ Use /dragon_attack to attack with sword
+🏹 Use /dragon_bow to attack with bow
+🗼 Use /dragon_tower to destroy a tower with bow
+🛡️ Use /dragon_defend to defend
+
+⚠️ **Destroy the towers first to weaken the dragon!**"""
+    
+    def broadcast_to_fighters(self, message):
+        """إرسال رسالة لجميع المقاتلين"""
+        for fighter_id in self.fighters.keys():
+            try:
+                bot.send_message(fighter_id, f"📢 {message}")
+            except Exception as e:
+                print(f"⚠️ Could not send to {fighter_id}: {e}")
+    
+    def get_random_phrase(self):
+        """جلب عبارة عشوائية حماسية"""
+        return random.choice(self.battle_phrases)
+    
+    def tower_attack(self, player, tower_id):
+        """هجوم على برج بالقوس والسهام 🏹"""
+        if not self.dragon_active:
+            return False, "❌ No dragon to fight!"
+        
+        if tower_id not in self.towers:
+            return False, "❌ Tower not found!"
+        
+        tower = self.towers[tower_id]
+        if not tower["active"]:
+            return False, "❌ This tower is already destroyed!"
+        
+        # ✅ التحقق من وجود القوس والسهام
+        if not player.has_item("bow"):
+            return False, "❌ You need a bow to destroy towers!"
+        
+        if not player.has_item("arrow", 1):
+            return False, "❌ You need at least one arrow for the bow!"
+        
+        # حساب الضرر على البرج
+        base_damage = 8 + player.strength
+        
+        # استخدام سهم
+        player.remove_item("arrow", 1)
+        base_damage += 5
+        
+        # مكافأة الضربات المتتالية
+        combo = self.combo_system.get(player.user_id, 0) + 1
+        self.combo_system[player.user_id] = combo
+        if combo >= 3:
+            base_damage = int(base_damage * 1.5)
+        
+        # الضربة الحاسمة
+        if random.random() < 0.15 + (player.luck / 100):
+            base_damage *= 2
+        
+        tower["hp"] = max(0, tower["hp"] - base_damage)
+        
+        # تحديث ضرر المقاتل
+        if player.user_id in self.fighters:
+            self.fighters[player.user_id]["damage_dealt"] += base_damage
+        
+        phrase = self.get_random_phrase()
+        
+        if tower["hp"] <= 0:
+            tower["active"] = False
+            self.towers_destroyed += 1
+            self.session.commit()
+            
+            # تأثير على التنين
+            self.dragon_hp = max(0, self.dragon_hp - 20)
+            
+            # إشعار الجميع
+            self.broadcast_to_fighters(f"🗼 **{tower['name']} destroyed!** -20 dragon health!")
+            
+            if self.towers_destroyed >= 4:
+                return True, f"""🗼 **All towers destroyed!**
+
+🔥 The dragon is weakened!
+{phrase}
+
+❤️ Dragon: {self.dragon_hp}/{self.dragon_max_hp}
+🏹 Your bow damage: {base_damage}
+💥 Combo: {combo}"""
+            
+            return True, f"""🗼 **{tower['name']} destroyed!** 💥
+
+{phrase}
+❤️ Dragon: {self.dragon_hp}/{self.dragon_max_hp}
+🗼 Towers remaining: {4 - self.towers_destroyed}
+🏹 Your bow damage: {base_damage}
+💥 Combo: {combo}"""
+        
+        # البرج لم يدمّر بعد
+        self.session.commit()
+        
+        towers_art = self.get_tower_animation()
+        
+        return True, f"""🏹 **Bow attack on {tower['name']}!**
+
+{towers_art}
+
+{phrase}
+❤️ Tower health: {tower['hp']}/{tower['max_hp']}
+❤️ Dragon: {self.dragon_hp}/{self.dragon_max_hp}
+🏹 Your bow damage: {base_damage}
+💥 Combo: {combo}"""
     
     def dragon_attack(self, player):
+        """هجوم بالسيف على التنين ⚔️"""
         if not self.dragon_active or self.dragon_hp <= 0:
-            return False, "❌ لا يوجد تنين للقتال!"
-        base_damage = 5 + player.strength
-        weapon_dmg = {"diamond_sword": 12, "iron_sword": 9, "stone_sword": 6, "wooden_sword": 4, "bow": 3}
+            return False, "❌ No dragon to fight!"
+        
+        # التحقق من السلاح
         eq = player.get_equip()
-        base_damage += weapon_dmg.get(eq.get('weapon'), 0)
-        if eq.get('weapon') == "bow":
-            base_damage += 4
-            if player.has_item("arrow", 1):
-                player.remove_item("arrow", 1)
-                base_damage += 3
+        weapon = eq.get("weapon")
+        
+        # التأكد من أن السيف مجهز
+        if not weapon or "diamond_sword" not in weapon:
+            return False, "❌ You must equip the diamond sword! Use /equip diamond_sword"
+        
+        # حساب الضرر
+        base_damage = 10 + player.strength
+        base_damage += 12  # ضرر السيف الألماسي
+        
+        # مكافأة الضربات المتتالية
+        combo = self.combo_system.get(player.user_id, 0) + 1
+        self.combo_system[player.user_id] = combo
+        if combo >= 3:
+            base_damage = int(base_damage * 1.5)
+        
+        # الأبراج تعطي مكافأة
+        destroyed_percent = self.towers_destroyed / 4
+        if destroyed_percent > 0:
+            base_damage = int(base_damage * (1 + destroyed_percent * 0.3))
+        
+        # الضربة الحاسمة
         if random.random() < 0.2 + (player.luck / 100):
             base_damage *= 2
-            player.add_xp(5)
-        if player.is_night():
-            base_damage = int(base_damage * 0.7)
+            phrase = "💥 **Critical sword hit!**"
+        else:
+            phrase = self.get_random_phrase()
+        
         self.dragon_hp = max(0, self.dragon_hp - base_damage)
-        dragon_damage = random.randint(8, 20)
-        if random.random() < 0.3:
-            dragon_damage = int(dragon_damage * 1.5)
+        
+        # تحديث ضرر المقاتل
+        if player.user_id in self.fighters:
+            self.fighters[player.user_id]["damage_dealt"] += base_damage
+        
+        # هجوم التنين على اللاعب
+        dragon_damage = random.randint(10, 25)
+        if self.towers_destroyed >= 4:
+            dragon_damage = int(dragon_damage * 0.5)
+        elif self.towers_destroyed >= 2:
+            dragon_damage = int(dragon_damage * 0.7)
+        
         player.current_health = max(0, player.current_health - dragon_damage)
+        
         self.session.commit()
+        
         if self.dragon_hp <= 0:
             return self.dragon_defeated(player)
-        return True, f"⚔️ ضربت التنين بـ {base_damage} ضرر!\n💢 التنين هاجمك بـ {dragon_damage} ضرر!\n\n❤️ التنين: {self.dragon_hp}/{self.dragon_max_hp}\n❤️ صحتك: {player.current_health}/{player.max_health}"
+        
+        return True, f"""⚔️ **You strike the dragon with your sword!**
+
+{phrase}
+🗡️ Your sword damage: {base_damage}
+💥 Combo: {combo}
+💢 Dragon hits you: -{dragon_damage} health
+
+❤️ Dragon: {self.dragon_hp}/{self.dragon_max_hp}
+❤️ Your health: {player.current_health}/{player.max_health}
+🗼 Towers destroyed: {self.towers_destroyed}/4"""
+    
+    def dragon_bow_attack(self, player):
+        """هجوم بالقوس على التنين 🏹"""
+        if not self.dragon_active or self.dragon_hp <= 0:
+            return False, "❌ No dragon to fight!"
+        
+        # التحقق من وجود القوس والسهام
+        if not player.has_item("bow"):
+            return False, "❌ You need a bow!"
+        
+        if not player.has_item("arrow", 1):
+            return False, "❌ You need at least one arrow!"
+        
+        # حساب الضرر
+        base_damage = 8 + player.strength
+        
+        # استخدام سهم
+        player.remove_item("arrow", 1)
+        base_damage += 5
+        
+        # مكافأة الضربات المتتالية
+        combo = self.combo_system.get(player.user_id, 0) + 1
+        self.combo_system[player.user_id] = combo
+        if combo >= 3:
+            base_damage = int(base_damage * 1.5)
+        
+        # الأبراج تعطي مكافأة
+        destroyed_percent = self.towers_destroyed / 4
+        if destroyed_percent > 0:
+            base_damage = int(base_damage * (1 + destroyed_percent * 0.3))
+        
+        # الضربة الحاسمة
+        if random.random() < 0.2 + (player.luck / 100):
+            base_damage *= 2
+            phrase = "💥 **Critical bow hit!**"
+        else:
+            phrase = self.get_random_phrase()
+        
+        self.dragon_hp = max(0, self.dragon_hp - base_damage)
+        
+        # تحديث ضرر المقاتل
+        if player.user_id in self.fighters:
+            self.fighters[player.user_id]["damage_dealt"] += base_damage
+        
+        # هجوم التنين على اللاعب
+        dragon_damage = random.randint(10, 25)
+        if self.towers_destroyed >= 4:
+            dragon_damage = int(dragon_damage * 0.5)
+        elif self.towers_destroyed >= 2:
+            dragon_damage = int(dragon_damage * 0.7)
+        
+        player.current_health = max(0, player.current_health - dragon_damage)
+        
+        self.session.commit()
+        
+        if self.dragon_hp <= 0:
+            return self.dragon_defeated(player)
+        
+        return True, f"""🏹 **You shoot an arrow at the dragon!**
+
+{phrase}
+🏹 Your bow damage: {base_damage}
+💥 Combo: {combo}
+💢 Dragon hits you: -{dragon_damage} health
+
+❤️ Dragon: {self.dragon_hp}/{self.dragon_max_hp}
+❤️ Your health: {player.current_health}/{player.max_health}
+🗼 Towers destroyed: {self.towers_destroyed}/4"""
+    
+    def dragon_defend(self, player):
+        """الدفاع ضد هجوم التنين"""
+        if not self.dragon_active:
+            return False, "❌ No dragon to fight!"
+        
+        shield = 8 + (player.endurance // 2)
+        if self.towers_destroyed >= 4:
+            shield += 5
+        
+        # إعادة تعيين الكومبو عند الدفاع
+        self.combo_system[player.user_id] = 0
+        
+        # التنين يهاجم لكن الدفاع يقلل الضرر
+        dragon_damage = random.randint(8, 20)
+        actual_damage = max(0, dragon_damage - shield)
+        
+        if actual_damage > 0:
+            player.current_health = max(0, player.current_health - actual_damage)
+            self.session.commit()
+            return True, f"""🛡️ **You blocked the dragon's attack!**
+
+🛡️ Your shield: +{shield}
+💢 Actual damage: -{actual_damage}
+
+❤️ Your health: {player.current_health}/{player.max_health}
+❤️ Dragon: {self.dragon_hp}/{self.dragon_max_hp}"""
+        else:
+            self.session.commit()
+            return True, f"""🛡️ **You completely blocked the attack!**
+
+{self.get_random_phrase()}
+💪 Your shield: +{shield}
+✅ No damage!
+
+❤️ Your health: {player.current_health}/{player.max_health}
+❤️ Dragon: {self.dragon_hp}/{self.dragon_max_hp}"""
     
     def dragon_defeated(self, player):
+        """هزيمة التنين"""
         self.dragon_active = False
         player.defeated_ender_dragon = True
-        player.add_xp(100)
-        player.level += 2
-        rewards = [("diamond", 10), ("gold_ore", 20), ("ender_pearl", 5), ("dragon_head", 1), ("dragon_egg", 1)]
+        player.add_xp(200)
+        player.level += 3
+        
+        rewards = [
+            ("diamond", 20),
+            ("gold_ore", 40),
+            ("ender_pearl", 10),
+            ("dragon_head", 1),
+            ("dragon_egg", 1),
+            ("netherite_scrap", 5),
+        ]
         rewards_text = []
         for item, amt in rewards:
             player.add_item(item, amt)
             rewards_text.append(f"{item} x{amt}")
+        
         titles = player.titles if isinstance(player.titles, list) else json.loads(player.titles or '[]')
-        if "قاتل التنين" not in titles:
-            titles.append("قاتل التنين")
+        if "🔥 Legendary Dragon Slayer" not in titles:
+            titles.append("🔥 Legendary Dragon Slayer")
         player.titles = titles
+        
+        # مكافأة إضافية لكل مقاتل
+        for fighter_id in self.fighters.keys():
+            if fighter_id != player.user_id:
+                try:
+                    fighter, _ = get_player(self.session, fighter_id)
+                    fighter.add_xp(100)
+                    fighter.level += 1
+                    fighter.add_item("diamond", 5)
+                    self.session.commit()
+                except:
+                    pass
+        
         self.session.commit()
-        return True, f"🎉 **لقد هزمت التنين!**\n\n⭐ +100 XP\n⬆️ +2 مستويات\n\n🎁 المكافآت:\n{', '.join(rewards_text)}\n\n🏅 لقب جديد: قاتل التنين\n\nتهانينا! أنت بطل ماينكرافت! 🏆"
+        
+        return True, f"""🎉 **You defeated the Legendary Ender Dragon!** 🐉
+
+{self.get_random_phrase()}
+
+⭐ **Rewards:**
+{', '.join(rewards_text)}
+
+⬆️ +3 Levels
+🔥 +200 XP
+🏅 New Title: Legendary Dragon Slayer
+
+**🎁 Team Rewards:**
+- Every fighter +100 XP
+- Every fighter +1 Level
+- Every fighter 5 Diamonds
+
+**You are Minecraft Champions!** 🏆"""
     
     def get_dragon_status(self):
+        """حالة التنين الحالية"""
         if not self.dragon_active:
-            return "🐉 التنين في سبات عميق..."
-        return f"🐉 **معركة التنين مستمرة!**\n\n❤️ صحة التنين: {self.dragon_hp}/{self.dragon_max_hp}\n👥 المقاتلون: {len(self.fighters)}\n⏳ الوقت: {int((datetime.utcnow() - self.dragon_spawn_time).total_seconds() / 60)} دقيقة"
+            return "🐉 The dragon is sleeping...\n📊 Ready for a challenge!"
+        
+        towers_art = self.get_tower_animation()
+        
+        fighters_list = []
+        for fighter_id, data in self.fighters.items():
+            try:
+                fighter, _ = get_player(self.session, fighter_id)
+                combo = self.combo_system.get(fighter_id, 0)
+                fighters_list.append(f"{fighter.username} (⚔️{data['damage_dealt']} | 💥{combo})")
+            except:
+                pass
+        
+        fighters_text = "\n".join(fighters_list) if fighters_list else "None"
+        
+        return f"""🐉 **Legendary Dragon Battle!**
+
+❤️ Dragon Health: {self.dragon_hp}/{self.dragon_max_hp}
+🗼 Towers Destroyed: {self.towers_destroyed}/4
+
+👥 **Fighters:** ({len(self.fighters)}/{self.max_fighters})
+{fighters_text}
+
+⏳ Time: {int((datetime.utcnow() - self.dragon_spawn_time).total_seconds() / 60)} minutes
+
+{towers_art}"""
 
 # ===============================
 # 9. نظام النذر (مُعدل)
@@ -1303,29 +1719,29 @@ class EnderDragonSystem:
 
 class NetherSystem:
     NETHER_ITEMS = {
-        "nether_wart": {"name": "نتي وارت", "emoji": "🌿"},
-        "blaze_rod": {"name": "عصا البلاز", "emoji": "🔥"},
-        "ghast_tear": {"name": "دمعة الغاست", "emoji": "💧"},
-        "magma_cream": {"name": "كريم الماجما", "emoji": "🟠"},
-        "netherite_scrap": {"name": "خردة النذريت", "emoji": "⚫"},
-        "gold_ore": {"name": "ذهب خام", "emoji": "✨"},
-        "soul_sand": {"name": "رمل الروح", "emoji": "🟤"},
-        "nether_brick": {"name": "طوب الجحيم", "emoji": "🧱"},
+        "nether_wart": {"name": "Nether Wart", "emoji": "🌿"},
+        "blaze_rod": {"name": "Blaze Rod", "emoji": "🔥"},
+        "ghast_tear": {"name": "Ghast Tear", "emoji": "💧"},
+        "magma_cream": {"name": "Magma Cream", "emoji": "🟠"},
+        "netherite_scrap": {"name": "Netherite Scrap", "emoji": "⚫"},
+        "gold_ore": {"name": "Gold Ore", "emoji": "✨"},
+        "soul_sand": {"name": "Soul Sand", "emoji": "🟤"},
+        "nether_brick": {"name": "Nether Brick", "emoji": "🧱"},
     }
     
     # أعداء النذر (أقوى)
     NETHER_MOBS = [
-        {"name": "بلاز", "emoji": "🔥", "hp": 35, "damage": 14, "xp": 25, 
+        {"name": "Blaze", "emoji": "🔥", "hp": 35, "damage": 14, "xp": 25, 
          "drops": [("blaze_rod", 2, 0.7), ("fiery_coal", 1, 0.3)]},
-        {"name": "غاست", "emoji": "👻", "hp": 45, "damage": 20, "xp": 35,
+        {"name": "Ghast", "emoji": "👻", "hp": 45, "damage": 20, "xp": 35,
          "drops": [("ghast_tear", 1, 0.4), ("gunpowder", 4, 0.6)]},
-        {"name": "بيغ زومبي", "emoji": "🧟‍♂️", "hp": 40, "damage": 16, "xp": 30,
+        {"name": "Pig Zombie", "emoji": "🧟‍♂️", "hp": 40, "damage": 16, "xp": 30,
          "drops": [("gold_ore", 3, 0.6), ("rotten_flesh", 5, 0.8)]},
-        {"name": "سكلتون الجحيم", "emoji": "💀", "hp": 30, "damage": 18, "xp": 25,
+        {"name": "Hell Skeleton", "emoji": "💀", "hp": 30, "damage": 18, "xp": 25,
          "drops": [("nether_brick", 4, 0.7), ("bow", 1, 0.1)]},
-        {"name": "ماغما كيوب", "emoji": "🟠", "hp": 25, "damage": 12, "xp": 20,
+        {"name": "Magma Cube", "emoji": "🟠", "hp": 25, "damage": 12, "xp": 20,
          "drops": [("magma_cream", 2, 0.6), ("fiery_coal", 1, 0.2)]},
-        {"name": "بيدرازين (زعيم)", "emoji": "👾", "hp": 70, "damage": 28, "xp": 55,
+        {"name": "Bedrazine (Boss)", "emoji": "👾", "hp": 70, "damage": 28, "xp": 55,
          "drops": [("netherite_scrap", 2, 0.5), ("diamond", 3, 0.3), ("blaze_rod", 5, 0.8)]},
     ]
     
@@ -1334,18 +1750,18 @@ class NetherSystem:
     
     def enter_nether(self, player):
         if player.level < 10:
-            return False, "❌ تحتاج مستوى 10 لدخول النذر!"
+            return False, "❌ You need level 10 to enter the Nether!"
         if not player.has_item("eye_of_ender", 1):
-            return False, "❌ تحتاج عين إندر لفتح بوابة النذر!"
+            return False, "❌ You need an Eye of Ender to open the Nether portal!"
         player.remove_item("eye_of_ender", 1)
         player.in_nether = True
         self.session.commit()
-        return True, "🔥 دخلت النذر! عالم الجحيم الخطير..."
+        return True, "🔥 You entered the Nether! The dangerous hell world..."
     
     def leave_nether(self, player):
         player.in_nether = False
         self.session.commit()
-        return True, "🌍 عدت إلى العالم العادي!"
+        return True, "🌍 You returned to the Overworld!"
     
     def explore_nether(self, player):
         events = []
@@ -1356,7 +1772,7 @@ class NetherSystem:
             events.append({
                 'type': 'enemy',
                 'data': mob,
-                'msg': f"⚔️ {mob['emoji']} {mob['name']} يهاجمك فجأة!"
+                'msg': f"⚔️ {mob['emoji']} {mob['name']} attacks you suddenly!"
             })
         
         # 25% كنز
@@ -1366,7 +1782,7 @@ class NetherSystem:
             player.add_item(item['name'], amt)
             events.append({
                 'type': 'loot',
-                'msg': f"🎁 وجدت صندوقاً في الحمم! {item['emoji']} {item['name']} x{amt}!"
+                'msg': f"🎁 You found a chest in the lava! {item['emoji']} {item['name']} x{amt}!"
             })
         
         # 15% فخ
@@ -1375,7 +1791,7 @@ class NetherSystem:
             player.current_health = max(0, player.current_health - damage)
             events.append({
                 'type': 'damage',
-                'msg': f"💥 انفجرت أرض الحمم تحتك! -{damage} صحة"
+                'msg': f"💥 The lava floor exploded under you! -{damage} health"
             })
         
         # 10% بوابة سرية (توصلك لكنز كبير)
@@ -1390,7 +1806,7 @@ class NetherSystem:
             player.add_item(reward['name'], reward['amt'])
             events.append({
                 'type': 'loot',
-                'msg': f"🌀 بوابة سرية! وجدت {reward['emoji']} {reward['name']} x{reward['amt']}!"
+                'msg': f"🌀 Secret portal! You found {reward['emoji']} {reward['name']} x{reward['amt']}!"
             })
         
         # 5% زعيم
@@ -1399,7 +1815,7 @@ class NetherSystem:
             events.append({
                 'type': 'enemy',
                 'data': boss,
-                'msg': f"👾 **ظهر بيدرازين - زعيم النذر!**\n⚔️ استعد للمعركة!"
+                'msg': f"👾 **Bedrazine - Nether Boss appears!**\n⚔️ Prepare for battle!"
             })
         
         self.session.commit()
@@ -1408,12 +1824,12 @@ class NetherSystem:
     def get_nether_menu(self):
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(
-            types.InlineKeyboardButton("🔍 استكشاف", callback_data="nether_explore"),
-            types.InlineKeyboardButton("📦 مخزوني", callback_data="nether_inventory")
+            types.InlineKeyboardButton("🔍 Explore", callback_data="nether_explore"),
+            types.InlineKeyboardButton("📦 Inventory", callback_data="nether_inventory")
         )
         kb.add(
-            types.InlineKeyboardButton("❤️ حالتي", callback_data="nether_status"),
-            types.InlineKeyboardButton("🏃 خروج", callback_data="nether_leave")
+            types.InlineKeyboardButton("❤️ Status", callback_data="nether_status"),
+            types.InlineKeyboardButton("🏃 Leave", callback_data="nether_leave")
         )
         return kb
 
@@ -1425,7 +1841,7 @@ class MinecraftHouseDrawer:
     
     HOUSES = {
         "wooden": {
-            "name": "بيت خشبي",
+            "name": "Wooden House",
             "emoji": "🏠",
             "blocks": {
                 "wall": "🟫",
@@ -1447,7 +1863,7 @@ class MinecraftHouseDrawer:
             ]
         },
         "stone": {
-            "name": "بيت حجري",
+            "name": "Stone House",
             "emoji": "🏰",
             "blocks": {
                 "wall": "⬜",
@@ -1469,7 +1885,7 @@ class MinecraftHouseDrawer:
             ]
         },
         "mansion": {
-            "name": "قصر فاخر",
+            "name": "Mansion",
             "emoji": "🏛️",
             "blocks": {
                 "wall": "🟪",
@@ -1491,7 +1907,7 @@ class MinecraftHouseDrawer:
             ]
         },
         "nether": {
-            "name": "بيت نذري",
+            "name": "Nether House",
             "emoji": "🔥",
             "blocks": {
                 "wall": "🟥",
@@ -1518,21 +1934,21 @@ class MinecraftHouseDrawer:
     def draw_house(cls, house_type, show_owner=False, owner_name="", level=1):
         """رسم بيت بمكعبات ماينكرافت"""
         if house_type not in cls.HOUSES:
-            return "🏚️ لا يوجد بيت"
+            return "🏚️ No house"
         
         house = cls.HOUSES[house_type]
         layout = house["layout"]
         
         result = []
         if show_owner and owner_name:
-            result.append(f"🏠 {house['name']} - المستوى {level}")
+            result.append(f"🏠 {house['name']} - Level {level}")
             result.append("")
         
         result.extend(layout)
         
         result.append("")
-        result.append(f"📊 المستوى: {level}")
-        result.append(f"👤 المالك: {owner_name if show_owner else 'غير معروف'}")
+        result.append(f"📊 Level: {level}")
+        result.append(f"👤 Owner: {owner_name if show_owner else 'Unknown'}")
         
         return "\n".join(result)
     
@@ -1551,7 +1967,7 @@ class MinecraftHouseDrawer:
             if stage_index >= len(stages) - 1:
                 return cls.draw_house(house_type, True, player.username, 1)
             else:
-                return f"""🏗️ **قيد البناء...** ({progress_percent}%)
+                return f"""🏗️ **Building...** ({progress_percent}%)
 
 🟫🟫🟫🟫🟫🟫🟫
 🟫🟫⬜⬜⬜🟫🟫
@@ -1560,13 +1976,13 @@ class MinecraftHouseDrawer:
 🟫🟫🟫🟫🟫🟫🟫
 🟩🟩🟩🟩🟩🟩🟩
 
-⏳ المرحلة: {building_system.BUILDING_STAGES[progress['current_stage']]['name']}"""
+⏳ Stage: {building_system.BUILDING_STAGES[progress['current_stage']]['name']}"""
         
         # إذا كان البيت مكتمل (من قاعدة البيانات)
         if player.house_type:
             return cls.draw_house(player.house_type, True, player.username, 1)
         
-        return "🏚️ لا يوجد بيت"
+        return "🏚️ No house"
 
 # ===============================
 # 11. البوت (الكامل المُعدل)
@@ -1574,7 +1990,7 @@ class MinecraftHouseDrawer:
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 if not TOKEN:
-    print("❌ لم يتم العثور على TOKEN!")
+    print("❌ Token not found!")
     exit(1)
 
 bot = telebot.TeleBot(TOKEN)
@@ -1606,7 +2022,7 @@ def safe_session(func):
             # محاولة إرسال رسالة خطأ للمستخدم إذا كان ذلك ممكناً
             try:
                 if args and hasattr(args[0], 'chat'):
-                    bot.send_message(args[0].chat.id, "⚠️ حدث خطأ في قاعدة البيانات. حاول مرة أخرى.")
+                    bot.send_message(args[0].chat.id, "⚠️ Database error. Please try again.")
             except:
                 pass
             raise
@@ -1617,18 +2033,18 @@ def menu(player=None):
     
     # إذا كان اللاعب في النذر
     if player and player.in_nether:
-        kb.add("🔥 النذر")
-        kb.add("🔙 رجوع")
+        kb.add("🔥 Nether")
+        kb.add("🔙 Back")
         return kb
     
-    # القائمة العادية
-    kb.add("🌳 الغابة", "🕳️ الكهف")
-    kb.add("🏘️ القرية", "🎒 مخزوني")
-    kb.add("🛠️ التصنيع", "🏠 بناء")
-    kb.add("🍖 أكل", "🗑️ حذف")
-    kb.add("❤️ حالتي", "📊 مهاراتي")
-    kb.add("🔥 النذر", "🐉 التنين")
-    kb.add("🔙 رجوع")
+    # القائمة العادية (مع إضافة زر المساعدة)
+    kb.add("🌳 Forest", "🕳️ Cave")
+    kb.add("🏘️ Village", "🎒 Inventory")
+    kb.add("🛠️ Crafting", "🏠 Build")
+    kb.add("🍖 Eat", "🗑️ Delete")
+    kb.add("❤️ Status", "📊 Skills")
+    kb.add("🔥 Nether", "🐉 Dragon")
+    kb.add("📖 Help", "🔙 Back")
     return kb
 
 def edit_msg(bot, chat_id, msg_id, text, reply_markup=None):
@@ -1656,11 +2072,135 @@ def update_time_and_events(player):
 def start(msg):
     p, new = get_player(session, msg.from_user.id, msg.from_user.first_name)
     if new:
-        txt = "🌟 أهلاً بك في عالم ماينكرافت!\n\nاستخدم الأزرار للتنقل."
+        txt = "🌟 Welcome to Minecraft Bot!\n\nUse the buttons to navigate.\n📖 Press Help for instructions."
     else:
         tod = p.get_time_of_day()
         txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
     bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
+
+# ===============================
+# 12. زر المساعدة - دليل المستخدم الشامل 🆕
+# ===============================
+
+@bot.message_handler(func=lambda m: m.text == "📖 Help")
+@safe_session
+def help_menu(msg):
+    """دليل المستخدم الشامل للعبة"""
+    help_text = """
+📖 **Minecraft Bot Guide** 🎮
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🌟 **Getting Started**
+• Use buttons to navigate
+• Start by gathering resources from Forest and Cave
+• Your level increases with XP
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🌳 **Forest**
+• Chop trees for wood
+• Hunt animals for food and leather
+• Exploring may reveal ancient temples
+
+🕳️ **Cave**
+• Mine rocks for minerals
+• Stone → Coal → Iron → Gold → Diamond
+• You need a pickaxe to mine!
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🏠 **Building**
+• Level 1: Wooden House 🏠
+• Level 5: Stone House 🏰
+• Level 15: Mansion 🏛️
+• Each house gives permanent bonuses
+
+🛠️ **Crafting**
+• Craft tools, weapons, and armor• Use furnace to smelt ores
+• Unlock new recipes as you level up
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🔥 **Nether**
+• Level 10+ to enter
+• Need Eye of Ender for portal
+• Strong enemies and rare rewards
+• Netherite Scrap, Blaze Rods, and more
+
+🐉 **Dragon** (NEW!)
+• Level 20+ to fight
+• Need 3 Eyes of Ender + Diamond Sword + Bow + Arrows
+• Team battle (max 3 players)
+• Destroy 4 towers with bow 🏹
+• Huge rewards upon victory!
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🏘️ **Village**
+• Sleep to restore health and hunger
+• Daily quests for rewards
+• Shop to buy resources
+• Trade with villagers
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+⚔️ **Combat**
+• Use /equip to equip weapons
+• Swords: Wooden → Stone → Iron → Diamond
+• Armor protects from attacks
+• Enemies are stronger at night!
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+📊 **Skills**
+• Every 5 levels you get a skill point
+• Strength increases damage
+• Speed helps with escape
+• Endurance increases health
+• Luck increases rare drops
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+💡 **Tips**
+• Keep your hunger high (🍖)
+• Sleep in the village to heal
+• Use the right tool for each job
+• Save rare resources for advanced crafting
+• Explore temples for treasures
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 **Quick Commands**
+/equip item_name - Equip an item
+/additem item_name amount - Add item (developer)
+/buy item_name - Buy from shop
+/trade number - Trade with villager
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+📱 **Suggestions welcome!**
+Help us improve the game 🚀
+"""
+    
+    # إضافة زر العودة مع الحالة الحالية
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(types.InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu"))
+    
+    bot.send_message(msg.chat.id, help_text, reply_markup=kb, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda c: c.data == "back_to_menu")
+@safe_session
+def back_to_menu(call):
+    """العودة للقائمة الرئيسية من المساعدة"""
+    p, _ = get_player(session, call.from_user.id)
+    tod = p.get_time_of_day()
+    txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, menu(p))
+
+# ===============================
+# 13. باقي أوامر البوت (معدلة)
+# ===============================
 
 @bot.message_handler(commands=['additem'])
 @safe_session
@@ -1668,13 +2208,13 @@ def add_item_cmd(msg):
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 3:
-        return bot.send_message(msg.chat.id, "استخدم: /additem اسم_العنصر العدد")
+        return bot.send_message(msg.chat.id, "Use: /additem item_name amount")
     try:
         amt = int(args[2])
     except:
-        return bot.send_message(msg.chat.id, "❌ العدد يجب أن يكون رقماً")
+        return bot.send_message(msg.chat.id, "❌ Amount must be a number")
     
-    # قائمة العناصر المسموحة
+    # قائمة العناصر المسموحة (جميعها بالإنجليزية)
     valid_items = [
         "oak_wood", "spruce_wood", "birch_wood", "jungle_wood",
         "stone", "coal", "iron_ore", "gold_ore", "diamond", "emerald",
@@ -1701,790 +2241,96 @@ def add_item_cmd(msg):
     ]
     
     if args[1] not in valid_items:
-        return bot.send_message(msg.chat.id, f"❌ {args[1]} غير معروف!\nالعناصر المتاحة: {', '.join(valid_items[:20])}...")
+        return bot.send_message(msg.chat.id, f"❌ {args[1]} unknown!\nAvailable items: {', '.join(valid_items[:20])}...")
     
     p.add_item(args[1], amt)
     session.commit()
-    bot.send_message(msg.chat.id, f"✅ تم إضافة {amt} من {args[1]}!")
+    bot.send_message(msg.chat.id, f"✅ Added {amt} of {args[1]}!")
 
-@bot.message_handler(commands=['equip'])
+# ===============================
+# 14. نظام الحذف (36 خانة كاملة)
+# ===============================
+
+@bot.message_handler(func=lambda m: m.text == "🗑️ Delete")
 @safe_session
-def equip_item(msg):
+def delete_menu(msg):
+    """عرض جميع الخانات الـ 36 للحذف"""
+    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
-    args = msg.text.split()
-    if len(args) < 2:
-        return bot.send_message(msg.chat.id, "❌ استخدم: /equip اسم_الأداة\nمثال: /equip iron_sword")
-    
-    item_name = args[1]
-    weapons = ["wooden_sword", "stone_sword", "iron_sword", "diamond_sword", "bow"]
-    axes = ["wooden_axe", "stone_axe", "iron_axe", "diamond_axe"]
-    pickaxes = ["stone_pickaxe", "iron_pickaxe", "diamond_pickaxe"]
-    helmets = ["wooden_helmet", "stone_helmet", "iron_helmet", "diamond_helmet"]
-    chestplates = ["wooden_chestplate", "stone_chestplate", "iron_chestplate", "diamond_chestplate", "fire_chestplate"]
-    leggings = ["wooden_leggings", "stone_leggings", "iron_leggings", "diamond_leggings"]
-    boots = ["wooden_boots", "stone_boots", "iron_boots", "diamond_boots"]
-    all_tools = weapons + axes + pickaxes + helmets + chestplates + leggings + boots
-    
-    if item_name not in all_tools:
-        return bot.send_message(msg.chat.id, f"❌ {item_name} غير معروف")
-    if not p.has_item(item_name, 1):
-        return bot.send_message(msg.chat.id, f"❌ ليس لديك {item_name}!\nاستخدم /additem {item_name} 1")
-    
-    eq = p.get_equip()
-    if item_name in weapons or item_name in axes or item_name in pickaxes:
-        old = eq.get("weapon")
-        eq["weapon"] = item_name
-        p.remove_item(item_name, 1)
-        if old:
-            p.add_item(old, 1)
-    elif item_name in helmets:
-        old = eq.get("helmet")
-        eq["helmet"] = item_name
-        p.remove_item(item_name, 1)
-        if old:
-            p.add_item(old, 1)
-    elif item_name in chestplates:
-        old = eq.get("chestplate")
-        eq["chestplate"] = item_name
-        p.remove_item(item_name, 1)
-        if old:
-            p.add_item(old, 1)
-    elif item_name in leggings:
-        old = eq.get("leggings")
-        eq["leggings"] = item_name
-        p.remove_item(item_name, 1)
-        if old:
-            p.add_item(old, 1)
-    elif item_name in boots:
-        old = eq.get("boots")
-        eq["boots"] = item_name
-        p.remove_item(item_name, 1)
-        if old:
-            p.add_item(old, 1)
-    
-    p.save_equip(eq)
-    session.commit()
-    
     session.refresh(p)
-    eq2 = p.get_equip()
-    damage = gm.calc_damage(p)
-    defense = gm.calc_defense(p)
+    inv = p.get_inv()
     
-    txt = f"✅ تم تجهيز {item_name}!\n\n🛡️ **التجهيزات الحالية:**\n"
-    txt += f"⚔️ السلاح/الأداة: {eq2.get('weapon') or 'لا يوجد'}\n"
-    txt += f"🪖 الخوذة: {eq2.get('helmet') or 'لا يوجد'}\n"
-    txt += f"👕 الصدرية: {eq2.get('chestplate') or 'لا يوجد'}\n"
-    txt += f"👖 البنطلون: {eq2.get('leggings') or 'لا يوجد'}\n"
-    txt += f"👢 الحذاء: {eq2.get('boots') or 'لا يوجد'}\n"
-    txt += f"\n📊 **الإحصائيات:**\n🗡️ الضرر: {damage}\n🛡️ الدفاع: {defense}"
+    # عرض جميع الخانات (0-35)
+    txt = "🗑️ **Select item to delete:**\n\n"
+    kb = types.InlineKeyboardMarkup(row_width=6)  # 6 أزرار في الصف
     
-    bot.send_message(msg.chat.id, txt)
-
-@bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
-@safe_session
-def area_menu(msg):
-    p, _ = get_player(session, msg.from_user.id)
-    
-    # 🔥 إذا كان في النذر، منع الدخول
-    if p.in_nether:
-        return bot.send_message(msg.chat.id, "❌ لا يمكنك الذهاب للغابة أو الكهف وأنت في النذر!\nاخرج أولاً باستخدام 🔙 رجوع.")
-    
-    is_forest = msg.text == "🌳 الغابة"
-    time_of_day, events = update_time_and_events(p)
-    is_night = p.is_night()
-    
-    txt = f"{'🌳 الغابة' if is_forest else '🕳️ الكهف'} | 🕐 {time_of_day}\n\n"
-    if events:
-        txt += f"✅ {events['msg']}\n\n"
-    
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    if is_forest:
-        trees = WorldData.get_trees()
-        for tree in random.sample(trees, min(2, len(trees))):
-            break_time = gm.get_break_time(p, tree['break_time'])
-            txt += f"🌳 {tree['name']} ({tree['blocks']} مكعبات) ⏱️{break_time:.1f}ث\n"
-            kb.add(types.InlineKeyboardButton(f"🪓 {tree['name']}", callback_data=f"chop_{tree['name']}"))
-        if not is_night:
-            animals = list(WorldData.get_animals().keys())
-            for animal in random.sample(animals, min(2, len(animals))):
-                kb.add(types.InlineKeyboardButton(f"🏹 {animal}", callback_data=f"hunt_{animal}"))
-        if random.random() < 0.15 and not is_night:
-            kb.add(types.InlineKeyboardButton("🏛️ معبد قديم!", callback_data="temple_enter"))
-    else:
-        rocks = WorldData.get_rocks()
-        for rock in random.sample(rocks, min(2, len(rocks))):
-            break_time = gm.get_break_time(p, rock['break_time'])
-            txt += f"🪨 {rock['name']} ({rock['blocks']} مكعبات) ⏱️{break_time:.1f}ث\n"
-            kb.add(types.InlineKeyboardButton(f"⛏️ {rock['name']}", callback_data=f"mine_{rock['name']}"))
-    
-    kb.add(types.InlineKeyboardButton("🔍 استكشاف", callback_data=f"explore_{'forest' if is_forest else 'cave'}"))
-    if is_night:
-        txt += "\n🌙 الليل! الأعداء في كل مكان!"
-    bot.send_message(msg.chat.id, txt, reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("chop_"))
-@safe_session
-def start_chop(call):
-    session.rollback()
-    tree_name = call.data[5:]
-    p, _ = get_player(session, call.from_user.id)
-    if p.is_night():
-        return bot.answer_callback_query(call.id, "🌙 لا يمكنك قطع الأشجار في الليل!")
-    trees = WorldData.get_trees()
-    tree = next((t for t in trees if t['name'] == tree_name), None)
-    if not tree:
-        return bot.answer_callback_query(call.id, "❌ شجرة غير موجودة")
-    break_time = gm.get_break_time(p, tree['break_time'])
-    chop_sessions[call.from_user.id] = {"tree": tree, "blocks": tree['blocks'], "break_time": break_time}
-    animation = gm.get_tree_animation(tree['blocks'], tree['blocks'])
-    txt = f"🪓 {tree['name']}\nمتبقي: {tree['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🪓 اكسر!", callback_data="do_chop"))
-    kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "do_chop")
-@safe_session
-def do_chop(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if call.from_user.id not in chop_sessions:
-        return bot.answer_callback_query(call.id, "انتهت الجلسة")
-    data = chop_sessions[call.from_user.id]
-    tree = data["tree"]
-    break_time = data.get("break_time", 2)
-    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... {break_time:.1f} ثانية", show_alert=True)
-    time.sleep(break_time)
-    data["blocks"] -= 1
-    result = gm.chop_block(p, tree)
-    session.commit()
-    animation = gm.get_tree_animation(tree['blocks'], data["blocks"])
-    if data["blocks"] <= 0:
-        txt = f"✅ انكسرت {tree['name']}!\n{animation}\n\n🎁 {', '.join(result['rewards'])}\n⭐ +{result['xp']}XP"
-        del chop_sessions[call.from_user.id]
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-    else:
-        txt = f"🪓 {tree['name']}\nمتبقي: {data['blocks']} مكعبات\n{animation}\n\n🎁 {', '.join(result['rewards'])}\n🍖 {result['hunger']:.1f}/20 | ❤️ {result['health']}/20\n⭐ +{result['xp']}XP"
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🪓 اكسر!", callback_data="do_chop"))
-        kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("mine_"))
-@safe_session
-def start_mine(call):
-    session.rollback()
-    rock_name = call.data[5:]
-    p, _ = get_player(session, call.from_user.id)
-    eq = p.get_equip()
-    weapon = eq.get("weapon")
-    if not gm.is_valid_pickaxe(weapon):
-        return bot.answer_callback_query(call.id, "❌ تحتاج معولاً لتكسير الحجر!\nاستخدم /equip stone_pickaxe")
-    rocks = WorldData.get_rocks()
-    rock = next((r for r in rocks if r['name'] == rock_name), None)
-    if not rock:
-        return bot.answer_callback_query(call.id, "❌ حجر غير موجود")
-    break_time = gm.get_break_time(p, rock['break_time'])
-    mine_sessions[call.from_user.id] = {"rock": rock, "blocks": rock['blocks'], "break_time": break_time}
-    animation = gm.get_rock_animation(rock['blocks'], rock['blocks'])
-    txt = f"⛏️ {rock['name']}\nمتبقي: {rock['blocks']} مكعبات\n{animation}\n\n⏳ وقت التكسير: {break_time:.1f} ثانية لكل مكعب\n\nاضغط اكسر!"
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("⛏️ اكسر!", callback_data="do_mine"))
-    kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "do_mine")
-@safe_session
-def do_mine(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if call.from_user.id not in mine_sessions:
-        return bot.answer_callback_query(call.id, "انتهت الجلسة")
-    data = mine_sessions[call.from_user.id]
-    rock = data["rock"]
-    break_time = data.get("break_time", 3)
-    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... {break_time:.1f} ثانية", show_alert=True)
-    time.sleep(break_time)
-    data["blocks"] -= 1
-    result = gm.mine_block(p, rock)
-    session.commit()
-    if result.get("failed"):
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "❌ فشل التكسير!")
-        del mine_sessions[call.from_user.id]
-        return
-    animation = gm.get_rock_animation(rock['blocks'], data["blocks"])
-    if data["blocks"] <= 0:
-        txt = f"✅ انكسر {rock['name']}!\n{animation}\n\n🎁 {', '.join(result['rewards'])}\n⭐ +{result['xp']}XP"
-        del mine_sessions[call.from_user.id]
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-    else:
-        txt = f"⛏️ {rock['name']}\nمتبقي: {data['blocks']} مكعبات\n{animation}\n\n🎁 {', '.join(result['rewards'])}\n🍖 {result['hunger']:.1f}/20 | ❤️ {result['health']}/20\n⭐ +{result['xp']}XP"
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("⛏️ اكسر!", callback_data="do_mine"))
-        kb.add(types.InlineKeyboardButton("❌ توقف", callback_data="stop"))
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
-@safe_session
-def hunt(call):
-    session.rollback()
-    animal_name = call.data[5:]
-    p, _ = get_player(session, call.from_user.id)
-    if p.is_night():
-        return bot.answer_callback_query(call.id, "🌙 الحيوانات نائمة في الليل!")
-    eq = p.get_equip()
-    weapon = eq.get("weapon")
-    if not weapon or not gm.is_combat_weapon(weapon):
-        return bot.answer_callback_query(call.id, "❌ تحتاج سيفاً أو قوساً للصيد!\nاستخدم /equip iron_sword")
-    result = gm.hunt_animal(p, animal_name)
-    session.commit()
-    if "error" in result:
-        return bot.answer_callback_query(call.id, result["error"])
-    txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-
-@bot.callback_query_handler(func=lambda c: c.data == "temple_enter")
-@safe_session
-def enter_temple(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    result = temple_system.enter_temple(p)
-    if result[0] == False:
-        return bot.answer_callback_query(call.id, result[1])
-    if result[0] == "puzzle":
-        puzzle = result[1]
-        txt = f"🏛️ معبد غامض!\n\n📜 **{puzzle['q']}**\n\nاختر الإجابة:"
-        answers = list(set([puzzle['a'], "الضوء", "الماء", "الرياح", "التراب", "السماء"]))
-        random.shuffle(answers)
-        answers = answers[:4]
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        for ans in answers:
-            kb.add(types.InlineKeyboardButton(f"📝 {ans}", callback_data=f"temple_answer_{ans}"))
-        temple_puzzle_answers[call.from_user.id] = puzzle
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-    elif result[0] == "monster":
-        monster = result[1]
-        battle_data = battle_system.start_battle(p, monster)
-        battle_sessions[call.from_user.id] = battle_data
-        txt = f"🏛️ في المعبد!\n\n{monster['emoji']} {monster['name']} يهاجمك!\n\n❤️ حياتك: {battle_data['player_hp']}/{battle_data['player_max_hp']}\n❤️ {monster['name']}: {battle_data['enemy_hp']}/{battle_data['enemy_max_hp']}"
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        kb.add(types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend"))
-        kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-    elif result[0] == "treasure":
-        msg = temple_system.get_temple_reward(p, result[1])
-        kb = temple_system.get_temple_menu()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ في المعبد!\n\n{msg}", kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "temple_explore")
-@safe_session
-def temple_explore(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    result = temple_system.enter_temple(p)
-    if result[0] == False:
-        return bot.answer_callback_query(call.id, result[1])
-    if result[0] == "puzzle":
-        puzzle = result[1]
-        txt = f"🏛️ معبد غامض!\n\n📜 **{puzzle['q']}**\n\nاختر الإجابة:"
-        answers = list(set([puzzle['a'], "الضوء", "الماء", "الرياح", "التراب", "السماء"]))
-        random.shuffle(answers)
-        answers = answers[:4]
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        for ans in answers:
-            kb.add(types.InlineKeyboardButton(f"📝 {ans}", callback_data=f"temple_answer_{ans}"))
-        temple_puzzle_answers[call.from_user.id] = puzzle
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-    elif result[0] == "monster":
-        monster = result[1]
-        battle_data = battle_system.start_battle(p, monster)
-        battle_sessions[call.from_user.id] = battle_data
-        txt = f"🏛️ في المعبد!\n\n{monster['emoji']} {monster['name']} يهاجمك!\n\n❤️ حياتك: {battle_data['player_hp']}/{battle_data['player_max_hp']}\n❤️ {monster['name']}: {battle_data['enemy_hp']}/{battle_data['enemy_max_hp']}"
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        kb.add(types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend"))
-        kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-    elif result[0] == "treasure":
-        msg = temple_system.get_temple_reward(p, result[1])
-        kb = temple_system.get_temple_menu()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ في المعبد!\n\n{msg}", kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "temple_leave")
-@safe_session
-def temple_leave(call):
-    session.rollback()
-    edit_msg(bot, call.message.chat.id, call.message.message_id, "🚪 خرجت من المعبد")
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("temple_answer_"))
-@safe_session
-def temple_answer(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if call.from_user.id not in temple_puzzle_answers:
-        return bot.answer_callback_query(call.id, "❌ انتهت جلسة المعبد")
-    puzzle = temple_puzzle_answers[call.from_user.id]
-    success, msg = temple_system.solve_puzzle(p, puzzle, call.data[14:])
-    session.commit()
-    del temple_puzzle_answers[call.from_user.id]
-    bot.answer_callback_query(call.id, msg)
-    kb = temple_system.get_temple_menu()
-    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ **نتيجة اللغز**\n\n{msg}", kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("explore_"))
-@safe_session
-def explore(call):
-    session.rollback()
-    area = call.data.split("_")[1]
-    p, _ = get_player(session, call.from_user.id)
-    time_of_day, events = update_time_and_events(p)
-    is_night = p.is_night()
-    
-    if random.random() < 0.2:
-        enemies = WorldData.get_enemies(is_night)
-        if enemies:
-            enemy = random.choice(enemies)
-            battle_data = battle_system.start_battle(p, enemy)
-            battle_sessions[call.from_user.id] = battle_data
-            txt = f"⚔️ هجوم!\n{enemy['emoji']} {enemy['name']} ظهر فجأة!\n🕐 {time_of_day}\n\n❤️ حياتك: {battle_data['player_hp']}/{battle_data['player_max_hp']}\n❤️ {enemy['name']}: {battle_data['enemy_hp']}/{battle_data['enemy_max_hp']}"
-            kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend"))
-            kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
-            edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-            return
-    
-    if area == "forest" and random.random() < 0.1 and not is_night:
-        txt = f"🏛️ وجدت معبداً قديماً في الغابة!\n🕐 {time_of_day}\n\nهل تريد الدخول؟"
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🏛️ دخول المعبد", callback_data="temple_enter"))
-        kb.add(types.InlineKeyboardButton("🚶 تخطي", callback_data="skip_temple"))
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-        return
-    
-    possible = ["apple", "bread", "coal", "stone", "oak_wood", "feather", "mushroom", "wheat"]
-    if is_night:
-        possible = ["coal", "iron_ore", "rotten_flesh", "bone", "gunpowder"]
-    item = random.choice(possible)
-    amt = random.randint(1, 2 + (p.luck or 0) // 10)
-    if is_night:
-        amt += 1
-    p.add_item(item, amt)
-    p.add_xp(4 if is_night else 2)
-    session.commit()
-    txt = f"🔍 استكشاف...\n🕐 {time_of_day}\n\n🎁 وجدت {item} x{amt}!\n⭐ +{4 if is_night else 2}XP"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-
-@bot.callback_query_handler(func=lambda c: c.data == "skip_temple")
-@safe_session
-def skip_temple(call):
-    session.rollback()
-    edit_msg(bot, call.message.chat.id, call.message.message_id, "🚶 واصلت طريقك...")
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("battle_"))
-@safe_session
-def battle_action(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if call.from_user.id not in battle_sessions:
-        return bot.answer_callback_query(call.id, "انتهى القتال")
-    battle_data = battle_sessions[call.from_user.id]
-    action = call.data[7:]
-    time_of_day = gm.update_game_time(p)
-    battle_data['is_night'] = p.is_night()
-    
-    if action == 'attack':
-        battle_data = battle_system.player_attack(p, battle_data)
-    elif action == 'defend':
-        battle_data = battle_system.player_defend(p, battle_data)
-    elif action == 'run':
-        success, battle_data = battle_system.try_escape(p, battle_data)
-        if success:
-            del battle_sessions[call.from_user.id]
-            session.commit()
-            edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏃 هربت!\n🕐 {time_of_day}\n\n" + "\n".join(battle_data['log'][-3:]))
-            return
-    
-    if battle_data['enemy_hp'] > 0 and battle_data['player_hp'] > 0:
-        battle_data = battle_system.enemy_turn(p, battle_data)
-    session.commit()
-    status, battle_data = battle_system.check_win(p, battle_data)
-    session.commit()
-    
-    if status == 'win':
-        del battle_sessions[call.from_user.id]
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "🎉 انتصرت!\n\n" + "\n".join(battle_data['log'][-5:]))
-        return
-    if status == 'dead':
-        del battle_sessions[call.from_user.id]
-        gm.respawn(p)
-        session.commit()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "💀 لقد مت!\n\n" + "\n".join(battle_data['log'][-3:]) + "\n\n🔄 تم إحياؤك في الغابة")
-        return
-    
-    battle_data['round'] += 1
-    battle_sessions[call.from_user.id] = battle_data
-    enemy = battle_data['enemy']
-    txt = f"⚔️ الجولة {battle_data['round']}\n🕐 {time_of_day}\n\n" + "\n".join(battle_data['log'][-3:])
-    txt += f"\n\n❤️ حياتك: {battle_data['player_hp']}/{battle_data['player_max_hp']}\n❤️ {enemy['name']}: {battle_data['enemy_hp']}/{battle_data['enemy_max_hp']}"
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend"))
-    kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.message_handler(func=lambda m: m.text == "🛠️ التصنيع")
-@safe_session
-def craft_menu(msg):
-    session.rollback()
-    p, _ = get_player(session, msg.from_user.id)
-    recipes = CraftingSystem.get_recipes(p)
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    txt = f"🛠️ **التصنيع**\n🕐 {p.get_time_of_day()}\n\n"
-    if recipes:
-        for i, r in enumerate(recipes):
-            materials = ", ".join([f"{k}×{v}" for k, v in r['in'].items()])
-            kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']} ({materials})", callback_data=f"craft_{i}"))
-    else:
-        txt += "📭 لا توجد وصفات متاحة\n\n"
-    if p.has_item("furnace"):
-        kb.add(types.InlineKeyboardButton("🔥 استخدام الفرن", callback_data="furnace_menu"))
-        txt += "\n🔥 لديك فرن! استخدمه لصهر المعادن."
-    bot.send_message(msg.chat.id, txt, reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "furnace_menu")
-@safe_session
-def furnace_menu(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if not p.has_item("furnace"):
-        return bot.answer_callback_query(call.id, "❌ ليس لديك فرن!")
-    txt = "🔥 **الفرن**\n\nاختر ما تريد صهره:\n"
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    has_items = False
-    for item, recipe in CraftingSystem.FURNACE_RECIPES.items():
-        if p.has_item(item):
-            has_items = True
-            kb.add(types.InlineKeyboardButton(f"🔄 {item} ← {recipe['out']}", callback_data=f"furnace_{item}"))
-    if not has_items:
-        txt += "\n📭 ليس لديك مواد قابلة للصهر"
-    kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_craft"))
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("furnace_"))
-@safe_session
-def furnace_smelt_callback(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    success, msg = CraftingSystem.furnace_smelt(p, call.data[8:])
-    session.commit()
-    bot.answer_callback_query(call.id, msg)
-    furnace_menu(call)
-
-@bot.callback_query_handler(func=lambda c: c.data == "back_to_craft")
-@safe_session
-def back_to_craft(call):
-    session.rollback()
-    craft_menu(call.message)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("craft_"))
-@safe_session
-def do_craft(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    idx = int(call.data.split("_")[1])
-    recipes = CraftingSystem.get_recipes(p)
-    if idx < len(recipes):
-        ok, msg = CraftingSystem.craft(p, recipes[idx])
-        session.commit()
-        bot.answer_callback_query(call.id, msg)
-
-@bot.message_handler(func=lambda m: m.text == "🏠 بناء")
-@safe_session
-def building_menu(msg):
-    session.rollback()
-    p, _ = get_player(session, msg.from_user.id)
-    update_time_and_events(p)
-    
-    # التحقق من وجود بناء قيد التنفيذ أولاً
-    status = building_system.get_building_status(p)
-    if status:
-        if status["is_complete"]:
-            success, msg_text = building_system.complete_stage(p)
-            if success:
-                # حفظ نوع المنزل في قاعدة البيانات
-                p.house_type = status["house_type"]
-                session.commit()
-                bot.send_message(msg.chat.id, msg_text)
-                building_menu(msg)
-                return
-            else:
-                bot.send_message(msg.chat.id, msg_text)
-                return
+    for i in range(36):  # عرض جميع الخانات الـ 36
+        slot = inv.get(f"slot_{i}")
+        if slot:
+            txt += f"`{i+1}`. {slot['name']} x{slot['amount']}\n"
+            kb.add(types.InlineKeyboardButton(f"{i+1}", callback_data=f"del_{i}"))
         else:
-            txt = f"🏗️ جارٍ البناء...\n"
-            txt += f"البيت: {status['house_name']}\n"
-            txt += f"المرحلة: {status['stage_name']}\n"
-            txt += f"التقدم: {'█' * (status['progress']//10)}{'░' * (10 - status['progress']//10)} {status['progress']}%\n"
-            txt += f"الوقت المتبقي: {status['time_left']} ثانية"
-            kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="build_status"))
-            kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="build_cancel"))
-            bot.send_message(msg.chat.id, txt, reply_markup=kb)
-            return
+            txt += f"`{i+1}`. 🟩 **Empty**\n"
     
-    available = building_system.get_available_houses(p)
-    if not available:
-        return bot.send_message(msg.chat.id, "❌ ليس لديك مستوى كافٍ لبناء أي بيت\n\nالمستويات المطلوبة:\n🏠 خشبي: مستوى 1\n🏰 حجري: مستوى 5\n🏛️ قصر: مستوى 15")
+    kb.add(types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_delete"))
     
-    txt = "🏠 اختر نوع البيت الذي تريد بنائه:\n\n"
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    for house_type in available:
-        house = building_system.HOUSE_TYPES[house_type]
-        stages_info = building_system.get_building_stages_info(house_type)
-        total_resources = {}
-        for stage in stages_info:
-            for item, amt in stage["resources"].items():
-                total_resources[item] = total_resources.get(item, 0) + amt
-        resources_text = ", ".join([f"{k} x{v}" for k, v in total_resources.items()])
-        txt += f"{house['emoji']} {house['name']}\n📦 الموارد: {resources_text}\n⭐ المكافآت: {house['bonus']}\n\n"
-        kb.add(types.InlineKeyboardButton(f"{house['emoji']} بناء {house['name']}", callback_data=f"build_{house_type}"))
-    bot.send_message(msg.chat.id, txt, reply_markup=kb)
+    bot.send_message(
+        msg.chat.id, 
+        txt, 
+        reply_markup=kb,
+        parse_mode='Markdown'
+    )
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("build_"))
+@bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
 @safe_session
-def start_build(call):
+def delete_item(call):
+    """حذف العنصر المختار"""
     session.rollback()
     p, _ = get_player(session, call.from_user.id)
-    success, msg = building_system.start_building(p, call.data[6:])
+    
+    slot_num = int(call.data.split("_")[1])
+    inv = p.get_inv()
+    slot = inv.get(f"slot_{slot_num}")
+    
+    if not slot:
+        return bot.answer_callback_query(call.id, "❌ This slot is already empty!", show_alert=True)
+    
+    item_name = slot.get("name")
+    item_amount = slot.get("amount")
+    
+    p.delete_slot(slot_num)
     session.commit()
-    if success:
-        status = building_system.get_building_status(p)
-        txt = f"{msg}\n\nالتقدم: 0%\n⏳ انتظر {status['time_left']} ثانية"
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="build_status"))
-        kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="build_cancel"))
-        edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-    else:
-        bot.answer_callback_query(call.id, msg)
+    
+    bot.answer_callback_query(
+        call.id, 
+        f"✅ Deleted {item_name} x{item_amount} from slot {slot_num+1}",
+        show_alert=True
+    )
+    
+    # تحديث الرسالة
+    edit_msg(
+        bot, 
+        call.message.chat.id, 
+        call.message.message_id, 
+        f"🗑️ **Deleted!**\n\n✅ Removed `{item_name}` x{item_amount}"
+    )
 
-@bot.callback_query_handler(func=lambda c: c.data == "build_status")
+@bot.callback_query_handler(func=lambda c: c.data == "cancel_delete")
 @safe_session
-def check_build_status(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    status = building_system.get_building_status(p)
-    if not status:
-        return bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
-    if status["is_complete"]:
-        success, msg = building_system.complete_stage(p)
-        if success:
-            p.house_type = status["house_type"]
-            session.commit()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, msg)
-        return
-    txt = f"🏗️ جارٍ البناء...\nالبيت: {status['house_name']}\nالمرحلة: {status['stage_name']}\nالتقدم: {'█' * (status['progress']//10)}{'░' * (10 - status['progress']//10)} {status['progress']}%\nالوقت المتبقي: {status['time_left']} ثانية"
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="build_status"))
-    kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="build_cancel"))
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "build_cancel")
-@safe_session
-def cancel_build(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if p.user_id in building_system.building_progress:
-        del building_system.building_progress[p.user_id]
-        session.commit()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "❌ تم إلغاء البناء")
-    else:
-        bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
+def cancel_delete(call):
+    """إلغاء عملية الحذف"""
+    edit_msg(
+        bot, 
+        call.message.chat.id, 
+        call.message.message_id, 
+        "❌ Delete cancelled"
+    )
 
 # ===============================
-# 11.5 القرية - المتجر والتبادل (مُصلح)
+# 15. باقي أوامر البوت
 # ===============================
 
-@bot.message_handler(func=lambda m: m.text == "🏘️ القرية")
-@safe_session
-def village(msg):
-    session.rollback()
-    p, _ = get_player(session, msg.from_user.id)
-    update_time_and_events(p)
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(types.InlineKeyboardButton("😴 نوم", callback_data="v_sleep"), types.InlineKeyboardButton("📋 مهام", callback_data="v_quests"))
-    kb.add(types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop"), types.InlineKeyboardButton("🏅 تبادل", callback_data="v_trade"))
-    kb.add(types.InlineKeyboardButton("⚔️ بطل القرية", callback_data="v_champion"))
-    bot.send_message(msg.chat.id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "v_sleep")
-@safe_session
-def village_sleep(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    result = gm.sleep(p)
-    session.commit()
-    if "error" in result:
-        bot.answer_callback_query(call.id, result["error"])
-    else:
-        edit_msg(bot, call.message.chat.id, call.message.message_id, f"😴 نمت جيداً!\n❤️ {result['hp']} | 🍖 {result['hunger']}")
-
-@bot.callback_query_handler(func=lambda c: c.data == "v_quests")
-@safe_session
-def village_quests_menu(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    quests = [
-        {"name": "الفلاح", "item": "wheat", "amount": 5, "reward": "bread", "reward_amt": 3, "xp": 10},
-        {"name": "الحداد", "item": "iron_ore", "amount": 3, "reward": "iron_sword", "reward_amt": 1, "xp": 15},
-        {"name": "الصياد", "item": "feather", "amount": 8, "reward": "bow", "reward_amt": 1, "xp": 12},
-        {"name": "المستكشف", "item": "bone", "amount": 6, "reward": "gold_ore", "reward_amt": 3, "xp": 10},
-        {"name": "البناء", "item": "stone", "amount": 10, "reward": "diamond", "reward_amt": 1, "xp": 20},
-        {"name": "الساحر", "item": "sap", "amount": 4, "reward": "healing_potion", "reward_amt": 2, "xp": 15},
-    ]
-    q = random.choice(quests)
-    txt = f"📋 **مهمة جديدة**\n\n👤 {q['name']} يطلب منك:\n📦 {q['item']} x{q['amount']}\n\n🎁 المكافأة: {q['reward']} x{q['reward_amt']}\n⭐ {q['xp']} XP"
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton("✅ قبول المهمة", callback_data="quest_accept"))
-    kb.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_village"))
-    village_quests[call.from_user.id] = q
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "quest_accept")
-@safe_session
-def accept_quest(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if call.from_user.id not in village_quests:
-        return bot.answer_callback_query(call.id, "❌ لا توجد مهمة نشطة")
-    q = village_quests[call.from_user.id]
-    if p.has_item(q['item'], q['amount']):
-        p.remove_item(q['item'], q['amount'])
-        p.add_item(q['reward'], q['reward_amt'])
-        p.add_xp(q['xp'])
-        session.commit()
-        del village_quests[call.from_user.id]
-        edit_msg(bot, call.message.chat.id, call.message.message_id, f"✅ أكملت المهمة!\n🎁 {q['reward']} x{q['reward_amt']}\n⭐ +{q['xp']}XP")
-    else:
-        bot.answer_callback_query(call.id, f"❌ تحتاج {q['amount']} {q['item']}")
-
-@bot.callback_query_handler(func=lambda c: c.data == "back_to_village")
-@safe_session
-def back_to_village(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    update_time_and_events(p)
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(types.InlineKeyboardButton("😴 نوم", callback_data="v_sleep"), types.InlineKeyboardButton("📋 مهام", callback_data="v_quests"))
-    kb.add(types.InlineKeyboardButton("🛒 متجر", callback_data="v_shop"), types.InlineKeyboardButton("🏅 تبادل", callback_data="v_trade"))
-    kb.add(types.InlineKeyboardButton("⚔️ بطل القرية", callback_data="v_champion"))
-    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏘️ القرية\n🕐 {p.get_time_of_day()}\n📊 مستوى القرية: {p.level//2 + 1}", kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "v_shop")
-@safe_session
-def village_shop(call):
-    session.rollback()
-    txt = "🛒 **متجر القرية**\n\n"
-    txt += "📦 تفاح = خشب بلوط ×2\n"
-    txt += "📦 لحم = حديد خام ×1\n"
-    txt += "📦 خبز = قمح ×3\n\n"
-    txt += "استخدم /buy تفاح\n"
-    txt += "استخدم /buy لحم\n"
-    txt += "استخدم /buy خبز"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-
-@bot.callback_query_handler(func=lambda c: c.data == "v_trade")
-@safe_session
-def village_trade(call):
-    session.rollback()
-    txt = "🏅 **التبادل مع القرويين**\n\n"
-    txt += "1️⃣ فلاح: 5 قمح → 3 خبز\n"
-    txt += "2️⃣ حداد: 3 حديد → 1 سيف حديدي\n"
-    txt += "3️⃣ صياد: 8 ريش → 1 قوس\n"
-    txt += "4️⃣ تاجر: 2 ألماس → 1 تفاح ذهبي\n\n"
-    txt += "استخدم /trade 1\n"
-    txt += "استخدم /trade 2\n"
-    txt += "استخدم /trade 3\n"
-    txt += "استخدم /trade 4"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-
-@bot.callback_query_handler(func=lambda c: c.data == "v_champion")
-@safe_session
-def village_champion(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    if p.level >= 20:
-        p.add_xp(10)
-        p.add_item("diamond", 1)
-        session.commit()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "⚔️ **بطل القرية**\n\n🏅 أنت بطل القرية!\n⭐ مكافأة يومية: 10 XP + 1 ألماس")
-    else:
-        edit_msg(bot, call.message.chat.id, call.message.message_id, f"⚔️ **بطل القرية**\n\n📊 تحتاج مستوى 20 لتصبح بطلاً\n📈 مستواك الحالي: {p.level}")
-
-@bot.message_handler(commands=['buy'])
-@safe_session
-def buy(msg):
-    session.rollback()
-    p, _ = get_player(session, msg.from_user.id)
-    args = msg.text.split()
-    if len(args) < 2:
-        return bot.send_message(msg.chat.id, "❌ استخدم: /buy تفاح\n/buy لحم\n/buy خبز")
-    
-    shop = {
-        "تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
-        "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
-        "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2}
-    }
-    
-    item = args[1]
-    if item not in shop:
-        return bot.send_message(msg.chat.id, "❌ العنصر غير متوفر!\nالمتاح: تفاح، لحم، خبز")
-    
-    s = shop[item]
-    if p.has_item(s["price"], s["amt"]):
-        p.remove_item(s["price"], s["amt"])
-        p.add_item(s["give"], s["gamt"])
-        session.commit()
-        bot.send_message(msg.chat.id, f"✅ اشتريت {item} x{s['gamt']}!")
-    else:
-        bot.send_message(msg.chat.id, f"❌ تحتاج {s['amt']} {s['price']}")
-
-@bot.message_handler(commands=['trade'])
-@safe_session
-def trade(msg):
-    session.rollback()
-    p, _ = get_player(session, msg.from_user.id)
-    args = msg.text.split()
-    if len(args) < 2:
-        return bot.send_message(msg.chat.id, "❌ استخدم: /trade 1\n/trade 2\n/trade 3\n/trade 4")
-    
-    try:
-        trade_num = int(args[1])
-    except:
-        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح")
-    
-    trades = {
-        1: {"name": "فلاح", "in": "wheat", "in_amt": 5, "out": "bread", "out_amt": 3},
-        2: {"name": "حداد", "in": "iron_ore", "in_amt": 3, "out": "iron_sword", "out_amt": 1},
-        3: {"name": "صياد", "in": "feather", "in_amt": 8, "out": "bow", "out_amt": 1},
-        4: {"name": "تاجر", "in": "diamond", "in_amt": 2, "out": "golden_apple", "out_amt": 1},
-    }
-    
-    if trade_num not in trades:
-        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح (1-4)")
-    
-    t = trades[trade_num]
-    if p.has_item(t["in"], t["in_amt"]):
-        p.remove_item(t["in"], t["in_amt"])
-        p.add_item(t["out"], t["out_amt"])
-        p.add_xp(5)
-        session.commit()
-        bot.send_message(msg.chat.id, f"✅ تم التبادل مع {t['name']}!\n🎁 {t['out']} x{t['out_amt']} +5XP")
-    else:
-        bot.send_message(msg.chat.id, f"❌ تحتاج {t['in_amt']} {t['in']}")
-
-# ===============================
-# 12. باقي أوامر البوت
-# ===============================
-
-@bot.message_handler(func=lambda m: m.text == "🎒 مخزوني")
+@bot.message_handler(func=lambda m: m.text == "🎒 Inventory")
 @safe_session
 def inventory(msg):
     session.rollback()
@@ -2493,41 +2339,15 @@ def inventory(msg):
     inv = p.get_inv()
     items = [(i, s) for i, s in enumerate(inv.values()) if s]
     if not items:
-        return bot.send_message(msg.chat.id, f"📭 المخزون فارغ\n🕐 {p.get_time_of_day()}")
-    txt = f"🎒 مخزونك\n🕐 {p.get_time_of_day()}\n\n"
-    for idx, slot in items:
+        return bot.send_message(msg.chat.id, f"📭 Inventory empty\n🕐 {p.get_time_of_day()}")
+    txt = f"🎒 Your Inventory\n🕐 {p.get_time_of_day()}\n\n"
+    for idx, slot in items[:18]:
         txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
     if len(items) > 18:
-        txt += f"\n... و {len(items)-18} عناصر أخرى"
+        txt += f"\n... and {len(items)-18} more items"
     bot.send_message(msg.chat.id, txt)
 
-@bot.message_handler(func=lambda m: m.text == "🗑️ حذف")
-@safe_session
-def delete_menu(msg):
-    session.rollback()
-    p, _ = get_player(session, msg.from_user.id)
-    session.refresh(p)
-    inv = p.get_inv()
-    items = [(i, s) for i, s in enumerate(inv.values()) if s]
-    if not items:
-        return bot.send_message(msg.chat.id, "📭 المخزون فارغ")
-    txt = "🗑️ اختر عنصراً للحذف:\n\n"
-    kb = types.InlineKeyboardMarkup(row_width=3)
-    for idx, slot in items:
-        txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
-        kb.add(types.InlineKeyboardButton(f"{idx+1}", callback_data=f"del_{idx}"))
-    bot.send_message(msg.chat.id, txt, reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
-@safe_session
-def delete_item(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    p.delete_slot(int(call.data.split("_")[1]))
-    session.commit()
-    bot.answer_callback_query(call.id, f"✅ تم حذف الخانة {int(call.data.split('_')[1])+1}")
-
-@bot.message_handler(func=lambda m: m.text == "🍖 أكل")
+@bot.message_handler(func=lambda m: m.text == "🍖 Eat")
 @safe_session
 def eat_menu(msg):
     session.rollback()
@@ -2536,11 +2356,11 @@ def eat_menu(msg):
     inv = p.get_inv()
     foods = [s for s in inv.values() if s and s['name'] in ["apple", "bread", "cooked_beef", "honey", "golden_apple", "raw_beef", "tropical_fruit", "cooked_chicken", "cooked_pork", "cooked_mutton"]]
     if not foods:
-        return bot.send_message(msg.chat.id, "🍖 لا طعام")
+        return bot.send_message(msg.chat.id, "🍖 No food")
     kb = types.InlineKeyboardMarkup(row_width=2)
     for f in foods[:10]:
         kb.add(types.InlineKeyboardButton(f"{f['name']} x{f['amount']}", callback_data=f"eat_{f['name']}"))
-    bot.send_message(msg.chat.id, "🍖 اختر الطعام", reply_markup=kb)
+    bot.send_message(msg.chat.id, "🍖 Choose food", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("eat_"))
 @safe_session
@@ -2552,12 +2372,12 @@ def do_eat(call):
     if "error" in res:
         bot.answer_callback_query(call.id, res["error"])
     else:
-        txt = f"🍖 {res['food']} | +{res['hunger']} شبع | {res['current']}/20"
+        txt = f"🍖 {res['food']} | +{res['hunger']} hunger | {res['current']}/20"
         if res.get('effects'):
             txt += "\n" + "\n".join(res['effects'])
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
-@bot.message_handler(func=lambda m: m.text == "❤️ حالتي")
+@bot.message_handler(func=lambda m: m.text == "❤️ Status")
 @safe_session
 def status(msg):
     session.rollback()
@@ -2573,32 +2393,32 @@ def status(msg):
     
     txt = f"👤 {p.username} | ⭐ Lv.{p.level}\n"
     txt += f"❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n"
-    txt += f"🗡️ ضرر: {damage} | 🛡️ دفاع: {defense}\n"
+    txt += f"🗡️ Damage: {damage} | 🛡️ Defense: {defense}\n"
     txt += f"🕐 {p.get_time_of_day()}\n"
-    txt += f"⚔️ السلاح/الأداة: {eq.get('weapon', 'لا يوجد')}\n"
-    txt += f"🪖 الخوذة: {eq.get('helmet', 'لا يوجد')}\n"
-    txt += f"👕 الصدرية: {eq.get('chestplate', 'لا يوجد')}\n"
-    txt += f"👖 البنطلون: {eq.get('leggings', 'لا يوجد')}\n"
-    txt += f"👢 الحذاء: {eq.get('boots', 'لا يوجد')}\n"
-    txt += f"\n🏠 **منزلك:**\n{house_art}\n"
-    txt += f"🏅 {', '.join(titles) if titles else 'لا ألقاب'}\n"
-    txt += f"🐺 حيوان: {p.pet or 'لا يوجد'}\n"
-    txt += f"🏛️ معابد: {p.temples_visited or 0}\n"
-    txt += f"🐉 التنين: {'✅ هزمته' if p.defeated_ender_dragon else '❌ لم يهزم'}"
+    txt += f"⚔️ Weapon/Tool: {eq.get('weapon', 'None')}\n"
+    txt += f"🪖 Helmet: {eq.get('helmet', 'None')}\n"
+    txt += f"👕 Chestplate: {eq.get('chestplate', 'None')}\n"
+    txt += f"👖 Leggings: {eq.get('leggings', 'None')}\n"
+    txt += f"👢 Boots: {eq.get('boots', 'None')}\n"
+    txt += f"\n🏠 **Your House:**\n{house_art}\n"
+    txt += f"🏅 {', '.join(titles) if titles else 'No titles'}\n"
+    txt += f"🐺 Pet: {p.pet or 'None'}\n"
+    txt += f"🏛️ Temples: {p.temples_visited or 0}\n"
+    txt += f"🐉 Dragon: {'✅ Defeated' if p.defeated_ender_dragon else '❌ Not defeated'}"
     
     bot.send_message(msg.chat.id, txt)
 
-@bot.message_handler(func=lambda m: m.text == "📊 مهاراتي")
+@bot.message_handler(func=lambda m: m.text == "📊 Skills")
 @safe_session
 def skills(msg):
     session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     session.refresh(p)
-    txt = f"⚔️ قوة: {p.strength} | 💨 سرعة: {p.speed}\n💪 تحمل: {p.endurance} | 🍀 حظ: {p.luck}\n🎯 نقاط: {p.skill_points}"
+    txt = f"⚔️ Strength: {p.strength} | 💨 Speed: {p.speed}\n💪 Endurance: {p.endurance} | 🍀 Luck: {p.luck}\n🎯 Points: {p.skill_points}"
     if p.skill_points > 0:
         kb = types.InlineKeyboardMarkup(row_width=2)
-        kb.add(types.InlineKeyboardButton("⚔️ قوة", callback_data="sk_strength"), types.InlineKeyboardButton("💨 سرعة", callback_data="sk_speed"))
-        kb.add(types.InlineKeyboardButton("💪 تحمل", callback_data="sk_endurance"), types.InlineKeyboardButton("🍀 حظ", callback_data="sk_luck"))
+        kb.add(types.InlineKeyboardButton("⚔️ Strength", callback_data="sk_strength"), types.InlineKeyboardButton("💨 Speed", callback_data="sk_speed"))
+        kb.add(types.InlineKeyboardButton("💪 Endurance", callback_data="sk_endurance"), types.InlineKeyboardButton("🍀 Luck", callback_data="sk_luck"))
         bot.send_message(msg.chat.id, txt, reply_markup=kb)
     else:
         bot.send_message(msg.chat.id, txt)
@@ -2619,151 +2439,193 @@ def upgrade_skill(call):
         bot.answer_callback_query(call.id, f"✅ {sk} +1")
 
 # ===============================
-# 13. نظام النذر - أوامر البوت
+# 16. أوامر التنين 🐉
 # ===============================
 
-@bot.message_handler(func=lambda m: m.text == "🔥 النذر")
-@safe_session
-def nether_menu(msg):
-    session.rollback()
-    p, _ = get_player(session, msg.from_user.id)
-    
-    # إذا كان اللاعب في النذر، اعرض قائمة النذر
-    if p.in_nether:
-        kb = nether.get_nether_menu()
-        txt = f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n📊 المستوى: {p.level}"
-        bot.send_message(msg.chat.id, txt, reply_markup=kb)
-        return
-    
-    # إذا لم يكن في النذر، اعرض زر الدخول
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("🚪 دخول النذر", callback_data="nether_enter"),
-        types.InlineKeyboardButton("ℹ️ معلومات", callback_data="nether_info")
-    )
-    bot.send_message(msg.chat.id, "🔥 **النذر - عالم الجحيم**\n\n⚠️ منطقة خطيرة جداً!\n📍 المستوى المطلوب: 10\n💀 أعداء أقوياء ومكافآت نادرة", reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == "nether_info")
-@safe_session
-def nether_info(call):
-    session.rollback()
-    txt = "🔥 **معلومات النذر**\n\n"
-    txt += "📍 المستوى المطلوب: 10\n"
-    txt += "💀 أعداء: أقوى من العالم العادي\n"
-    txt += "🎁 مكافآت: نادرة وقوية\n"
-    txt += "⚠️ خطر: الحمم والأعداء في كل مكان\n\n"
-    txt += "**المعادن النادرة:**\n"
-    txt += "⚫ خردة النذريت\n"
-    txt += "🔥 عصا البلاز\n"
-    txt += "💧 دمعة الغاست\n"
-    txt += "🟠 كريم الماجما"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
-
-@bot.callback_query_handler(func=lambda c: c.data == "nether_enter")
-@safe_session
-def nether_enter(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    success, msg = nether.enter_nether(p)
-    if success:
-        kb = nether.get_nether_menu()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 {msg}\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
-    else:
-        bot.answer_callback_query(call.id, msg)
-
-@bot.callback_query_handler(func=lambda c: c.data == "nether_leave")
-@safe_session
-def nether_leave(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    success, msg = nether.leave_nether(p)
-    bot.answer_callback_query(call.id, msg)
-    # العودة إلى القائمة الرئيسية
-    go_back(call.message)
-
-@bot.callback_query_handler(func=lambda c: c.data == "nether_inventory")
-@safe_session
-def nether_inventory(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    inv = p.get_inv()
-    items = [(i, s) for i, s in enumerate(inv.values()) if s]
-    if not items:
-        txt = "📭 المخزون فارغ"
-    else:
-        txt = "🎒 **مخزونك في النذر**\n\n"
-        for idx, slot in items[:18]:
-            txt += f"{idx+1}. {slot['name']} x{slot['amount']}\n"
-        if len(items) > 18:
-            txt += f"\n... و {len(items)-18} عناصر أخرى"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
-
-@bot.callback_query_handler(func=lambda c: c.data == "nether_status")
-@safe_session
-def nether_status(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    eq = p.get_equip()
-    damage = gm.calc_damage(p)
-    defense = gm.calc_defense(p)
-    txt = f"🔥 **حالتك في النذر**\n\n"
-    txt += f"👤 {p.username} | ⭐ Lv.{p.level}\n"
-    txt += f"❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n"
-    txt += f"🗡️ ضرر: {damage} | 🛡️ دفاع: {defense}\n"
-    txt += f"⚔️ السلاح: {eq.get('weapon', 'لا يوجد')}"
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
-
-@bot.callback_query_handler(func=lambda c: c.data == "nether_explore")
-@safe_session
-def nether_explore_callback(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    
-    if not p.in_nether:
-        return bot.answer_callback_query(call.id, "❌ أنت لست في النذر!")
-    
-    if p.level < 10:
-        return bot.answer_callback_query(call.id, "❌ تحتاج مستوى 10!")
-    
-    if p.current_health <= 5:
-        return bot.answer_callback_query(call.id, "❤️ صحتك منخفضة! استرح قبل الاستكشاف!")
-    
-    events = nether.explore_nether(p)
-    session.commit()
-    
-    txt = "🔥 **استكشاف النذر...**\n\n"
-    
-    for event in events:
-        txt += f"{event['msg']}\n"
-        # إذا كان عدو، ابدأ قتال
-        if event.get('type') == 'enemy':
-            battle_data = battle_system.start_battle(p, event['data'])
-            battle_sessions[call.from_user.id] = battle_data
-            kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(types.InlineKeyboardButton("🗡️ هجوم", callback_data="battle_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="battle_defend"))
-            kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
-            edit_msg(bot, call.message.chat.id, call.message.message_id, txt + f"\n\n❤️ حياتك: {battle_data['player_hp']}/{battle_data['player_max_hp']}\n❤️ العدو: {battle_data['enemy_hp']}/{battle_data['enemy_max_hp']}", kb)
-            return
-    
-    txt += f"\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20"
-    
-    if not events:
-        txt += "\n🌋 النذر هادئ... لكن الحمم تغلي تحت قدميك!"
-    
-    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, nether.get_nether_menu())
-
-@bot.message_handler(func=lambda m: m.text == "🐉 التنين")
+@bot.message_handler(func=lambda m: m.text == "🐉 Dragon")
 @safe_session
 def dragon_menu(msg):
     session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     status = ender_dragon.get_dragon_status()
     can, msg_text = ender_dragon.can_fight_dragon(p)
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    if can:
-        kb.add(types.InlineKeyboardButton("🐉 قتال التنين!", callback_data="dragon_fight"))
-    kb.add(types.InlineKeyboardButton("📊 حالة التنين", callback_data="dragon_status"))
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    
+    if ender_dragon.dragon_active:
+        kb.add(types.InlineKeyboardButton("⚔️ Sword Attack", callback_data="dragon_attack"))
+        kb.add(types.InlineKeyboardButton("🏹 Bow Attack", callback_data="dragon_bow"))
+        kb.add(types.InlineKeyboardButton("🗼 Destroy Tower", callback_data="dragon_tower_menu"))
+        kb.add(types.InlineKeyboardButton("🛡️ Defend", callback_data="dragon_defend"))
+        
+        if len(ender_dragon.fighters) < ender_dragon.max_fighters:
+            if can:
+                kb.add(types.InlineKeyboardButton("⚔️ Join Battle!", callback_data="dragon_join"))
+        
+        kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+        kb.add(types.InlineKeyboardButton("🏃 Run", callback_data="dragon_run"))
+    else:
+        if can:
+            kb.add(types.InlineKeyboardButton("🐉 Start Battle!", callback_data="dragon_start"))
+        kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+    
     bot.send_message(msg.chat.id, f"{status}\n\n{msg_text}", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_join")
+@safe_session
+def dragon_join(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    
+    if not ender_dragon.dragon_active:
+        return bot.answer_callback_query(call.id, "❌ No active dragon battle!")
+    
+    if p.user_id in ender_dragon.fighters:
+        return bot.answer_callback_query(call.id, "✅ You're already in battle!")
+    
+    if len(ender_dragon.fighters) >= ender_dragon.max_fighters:
+        return bot.answer_callback_query(call.id, f"❌ Battle is full! Maximum {ender_dragon.max_fighters} fighters")
+    
+    can, msg = ender_dragon.can_fight_dragon(p)
+    if not can:
+        return bot.answer_callback_query(call.id, msg)
+    
+    ender_dragon.fighters[p.user_id] = {
+        "damage_dealt": 0,
+        "joined_at": datetime.utcnow(),
+        "combo": 0
+    }
+    session.commit()
+    
+    ender_dragon.broadcast_to_fighters(f"⚔️ **{p.username} joined the battle!** ({len(ender_dragon.fighters)}/{ender_dragon.max_fighters})")
+    
+    bot.answer_callback_query(call.id, f"✅ Joined battle! Fighters: {len(ender_dragon.fighters)}/{ender_dragon.max_fighters}")
+
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_tower_menu")
+@safe_session
+def dragon_tower_menu(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    
+    if not ender_dragon.dragon_active:
+        return bot.answer_callback_query(call.id, "❌ No dragon to fight!")
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for tower_id, tower in ender_dragon.towers.items():
+        if tower["active"]:
+            hp_percent = (tower["hp"] / tower["max_hp"]) * 100
+            kb.add(types.InlineKeyboardButton(
+                f"{tower['emoji']} {tower['name']} ({int(hp_percent)}%)",
+                callback_data=f"dragon_tower_{tower_id}"
+            ))
+    
+    kb.add(types.InlineKeyboardButton("🔙 Back", callback_data="dragon_back"))
+    
+    towers_art = ender_dragon.get_tower_animation()
+    edit_msg(bot, call.message.chat.id, call.message.message_id, 
+             f"🗼 **Choose a tower to destroy with bow 🏹:**\n\n{towers_art}", kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("dragon_tower_"))
+@safe_session
+def dragon_tower_attack(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    tower_id = int(call.data.split("_")[2])
+    
+    success, msg = ender_dragon.tower_attack(p, tower_id)
+    if success:
+        if "destroyed" in msg or "All" in msg:
+            edit_msg(bot, call.message.chat.id, call.message.message_id, msg)
+        else:
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            kb.add(types.InlineKeyboardButton("⚔️ Sword Attack", callback_data="dragon_attack"))
+            kb.add(types.InlineKeyboardButton("🏹 Bow Attack", callback_data="dragon_bow"))
+            kb.add(types.InlineKeyboardButton("🗼 Destroy Tower", callback_data="dragon_tower_menu"))
+            kb.add(types.InlineKeyboardButton("🛡️ Defend", callback_data="dragon_defend"))
+            kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+            edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
+    else:
+        bot.answer_callback_query(call.id, msg)
+
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_bow")
+@safe_session
+def dragon_bow_attack_callback(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    
+    success, msg = ender_dragon.dragon_bow_attack(p)
+    if success:
+        if "defeated" in msg or "victory" in msg:
+            edit_msg(bot, call.message.chat.id, call.message.message_id, msg)
+        else:
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            kb.add(types.InlineKeyboardButton("⚔️ Sword Attack", callback_data="dragon_attack"))
+            kb.add(types.InlineKeyboardButton("🏹 Bow Attack", callback_data="dragon_bow"))
+            kb.add(types.InlineKeyboardButton("🗼 Destroy Tower", callback_data="dragon_tower_menu"))
+            kb.add(types.InlineKeyboardButton("🛡️ Defend", callback_data="dragon_defend"))
+            kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+            edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
+    else:
+        bot.answer_callback_query(call.id, msg)
+
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_back")
+@safe_session
+def dragon_back(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    status = ender_dragon.get_dragon_status()
+    can, msg_text = ender_dragon.can_fight_dragon(p)
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    
+    if ender_dragon.dragon_active:
+        kb.add(types.InlineKeyboardButton("⚔️ Sword Attack", callback_data="dragon_attack"))
+        kb.add(types.InlineKeyboardButton("🏹 Bow Attack", callback_data="dragon_bow"))
+        kb.add(types.InlineKeyboardButton("🗼 Destroy Tower", callback_data="dragon_tower_menu"))
+        kb.add(types.InlineKeyboardButton("🛡️ Defend", callback_data="dragon_defend"))
+        if len(ender_dragon.fighters) < ender_dragon.max_fighters:
+            if can:
+                kb.add(types.InlineKeyboardButton("⚔️ Join Battle!", callback_data="dragon_join"))
+        kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+        kb.add(types.InlineKeyboardButton("🏃 Run", callback_data="dragon_run"))
+    else:
+        if can:
+            kb.add(types.InlineKeyboardButton("🐉 Start Battle!", callback_data="dragon_start"))
+        kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+    
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"{status}\n\n{msg_text}", kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_run")
+@safe_session
+def dragon_run(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    
+    if p.user_id in ender_dragon.fighters:
+        del ender_dragon.fighters[p.user_id]
+        ender_dragon.broadcast_to_fighters(f"🏃 **{p.username} fled the battle!**")
+        session.commit()
+    
+    edit_msg(bot, call.message.chat.id, call.message.message_id, "🏃 You fled the battle!")
+    go_back(call.message)
+
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_start")
+@safe_session
+def dragon_start(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    success, msg = ender_dragon.start_dragon_fight(p)
+    if success:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(types.InlineKeyboardButton("⚔️ Sword Attack", callback_data="dragon_attack"))
+        kb.add(types.InlineKeyboardButton("🏹 Bow Attack", callback_data="dragon_bow"))
+        kb.add(types.InlineKeyboardButton("🗼 Destroy Tower", callback_data="dragon_tower_menu"))
+        kb.add(types.InlineKeyboardButton("🛡️ Defend", callback_data="dragon_defend"))
+        kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+        kb.add(types.InlineKeyboardButton("🏃 Run", callback_data="dragon_run"))
+        edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
+    else:
+        bot.answer_callback_query(call.id, msg)
 
 @bot.callback_query_handler(func=lambda c: c.data == "dragon_status")
 @safe_session
@@ -2771,76 +2633,246 @@ def dragon_status_callback(call):
     session.rollback()
     edit_msg(bot, call.message.chat.id, call.message.message_id, ender_dragon.get_dragon_status())
 
-@bot.callback_query_handler(func=lambda c: c.data == "dragon_fight")
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_attack")
 @safe_session
-def dragon_fight(call):
+def dragon_attack_callback(call):
     session.rollback()
     p, _ = get_player(session, call.from_user.id)
-    success, msg = ender_dragon.start_dragon_fight(p)
+    
+    success, msg = ender_dragon.dragon_attack(p)
     if success:
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        kb.add(types.InlineKeyboardButton("⚔️ هجوم", callback_data="dragon_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="dragon_defend"))
-        kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="dragon_run"))
-        bot.send_message(call.message.chat.id, msg, reply_markup=kb)
-    else:
-        bot.answer_callback_query(call.id, msg)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("dragon_"))
-@safe_session
-def dragon_action(call):
-    session.rollback()
-    p, _ = get_player(session, call.from_user.id)
-    action = call.data[7:]
-    if action == "attack":
-        success, msg = ender_dragon.dragon_attack(p)
-    elif action == "defend":
-        p.current_health = min(p.max_health, p.current_health + 5)
-        session.commit()
-        msg = "🛡️ استعددت للدفاع! +5 صحة"
-        success = True
-    elif action == "run":
-        msg = "🏃 هربت من التنين!"
-        success = True
-        ender_dragon.dragon_active = False
-    if success:
-        if "هزم" in msg or "انتصار" in msg:
+        if "defeated" in msg or "victory" in msg:
             edit_msg(bot, call.message.chat.id, call.message.message_id, msg)
         else:
             kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(types.InlineKeyboardButton("⚔️ هجوم", callback_data="dragon_attack"), types.InlineKeyboardButton("🛡️ دفاع", callback_data="dragon_defend"))
-            kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="dragon_run"))
+            kb.add(types.InlineKeyboardButton("⚔️ Sword Attack", callback_data="dragon_attack"))
+            kb.add(types.InlineKeyboardButton("🏹 Bow Attack", callback_data="dragon_bow"))
+            kb.add(types.InlineKeyboardButton("🗼 Destroy Tower", callback_data="dragon_tower_menu"))
+            kb.add(types.InlineKeyboardButton("🛡️ Defend", callback_data="dragon_defend"))
+            kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
             edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
     else:
         bot.answer_callback_query(call.id, msg)
 
-@bot.callback_query_handler(func=lambda c: c.data == "stop")
+@bot.callback_query_handler(func=lambda c: c.data == "dragon_defend")
 @safe_session
-def stop(call):
+def dragon_defend_callback(call):
     session.rollback()
-    uid = call.from_user.id
-    chop_sessions.pop(uid, None)
-    mine_sessions.pop(uid, None)
-    battle_sessions.pop(uid, None)
-    temple_puzzle_answers.pop(uid, None)
-    village_quests.pop(uid, None)
-    if uid in building_system.building_progress:
-        del building_system.building_progress[uid]
-    edit_msg(bot, call.message.chat.id, call.message.message_id, "👋 تم التوقف")
+    p, _ = get_player(session, call.from_user.id)
+    success, msg = ender_dragon.dragon_defend(p)
+    if success:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(types.InlineKeyboardButton("⚔️ Sword Attack", callback_data="dragon_attack"))
+        kb.add(types.InlineKeyboardButton("🏹 Bow Attack", callback_data="dragon_bow"))
+        kb.add(types.InlineKeyboardButton("🗼 Destroy Tower", callback_data="dragon_tower_menu"))
+        kb.add(types.InlineKeyboardButton("🛡️ Defend", callback_data="dragon_defend"))
+        kb.add(types.InlineKeyboardButton("📊 Dragon Status", callback_data="dragon_status"))
+        edit_msg(bot, call.message.chat.id, call.message.message_id, msg, kb)
+    else:
+        bot.answer_callback_query(call.id, msg)
 
-@bot.message_handler(func=lambda m: m.text == "🔙 رجوع")
+# ===============================
+# 17. أوامر القرية والمتجر
+# ===============================
+
+@bot.message_handler(func=lambda m: m.text == "🏘️ Village")
+@safe_session
+def village(msg):
+    session.rollback()
+    p, _ = get_player(session, msg.from_user.id)
+    update_time_and_events(p)
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(types.InlineKeyboardButton("😴 Sleep", callback_data="v_sleep"), types.InlineKeyboardButton("📋 Quests", callback_data="v_quests"))
+    kb.add(types.InlineKeyboardButton("🛒 Shop", callback_data="v_shop"), types.InlineKeyboardButton("🏅 Trade", callback_data="v_trade"))
+    kb.add(types.InlineKeyboardButton("⚔️ Village Champion", callback_data="v_champion"))
+    bot.send_message(msg.chat.id, f"🏘️ Village\n🕐 {p.get_time_of_day()}\n📊 Village Level: {p.level//2 + 1}", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_sleep")
+@safe_session
+def village_sleep(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    result = gm.sleep(p)
+    session.commit()
+    if "error" in result:
+        bot.answer_callback_query(call.id, result["error"])
+    else:
+        edit_msg(bot, call.message.chat.id, call.message.message_id, f"😴 You slept well!\n❤️ {result['hp']} | 🍖 {result['hunger']}")
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_quests")
+@safe_session
+def village_quests_menu(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    quests = [
+        {"name": "Farmer", "item": "wheat", "amount": 5, "reward": "bread", "reward_amt": 3, "xp": 10},
+        {"name": "Blacksmith", "item": "iron_ore", "amount": 3, "reward": "iron_sword", "reward_amt": 1, "xp": 15},
+        {"name": "Hunter", "item": "feather", "amount": 8, "reward": "bow", "reward_amt": 1, "xp": 12},
+        {"name": "Explorer", "item": "bone", "amount": 6, "reward": "gold_ore", "reward_amt": 3, "xp": 10},
+        {"name": "Builder", "item": "stone", "amount": 10, "reward": "diamond", "reward_amt": 1, "xp": 20},
+        {"name": "Wizard", "item": "sap", "amount": 4, "reward": "healing_potion", "reward_amt": 2, "xp": 15},
+    ]
+    q = random.choice(quests)
+    txt = f"📋 **New Quest**\n\n👤 {q['name']} asks for:\n📦 {q['item']} x{q['amount']}\n\n🎁 Reward: {q['reward']} x{q['reward_amt']}\n⭐ {q['xp']} XP"
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(types.InlineKeyboardButton("✅ Accept Quest", callback_data="quest_accept"))
+    kb.add(types.InlineKeyboardButton("🔙 Back", callback_data="back_to_village"))
+    village_quests[call.from_user.id] = q
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "quest_accept")
+@safe_session
+def accept_quest(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    if call.from_user.id not in village_quests:
+        return bot.answer_callback_query(call.id, "❌ No active quest")
+    q = village_quests[call.from_user.id]
+    if p.has_item(q['item'], q['amount']):
+        p.remove_item(q['item'], q['amount'])
+        p.add_item(q['reward'], q['reward_amt'])
+        p.add_xp(q['xp'])
+        session.commit()
+        del village_quests[call.from_user.id]
+        edit_msg(bot, call.message.chat.id, call.message.message_id, f"✅ Quest completed!\n🎁 {q['reward']} x{q['reward_amt']}\n⭐ +{q['xp']}XP")
+    else:
+        bot.answer_callback_query(call.id, f"❌ You need {q['amount']} {q['item']}")
+
+@bot.callback_query_handler(func=lambda c: c.data == "back_to_village")
+@safe_session
+def back_to_village(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    update_time_and_events(p)
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(types.InlineKeyboardButton("😴 Sleep", callback_data="v_sleep"), types.InlineKeyboardButton("📋 Quests", callback_data="v_quests"))
+    kb.add(types.InlineKeyboardButton("🛒 Shop", callback_data="v_shop"), types.InlineKeyboardButton("🏅 Trade", callback_data="v_trade"))
+    kb.add(types.InlineKeyboardButton("⚔️ Village Champion", callback_data="v_champion"))
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏘️ Village\n🕐 {p.get_time_of_day()}\n📊 Village Level: {p.level//2 + 1}", kb)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_shop")
+@safe_session
+def village_shop(call):
+    session.rollback()
+    txt = "🛒 **Village Shop**\n\n"
+    txt += "📦 Apple = Oak Wood ×2\n"
+    txt += "📦 Cooked Beef = Iron Ore ×1\n"
+    txt += "📦 Bread = Wheat ×3\n"
+    txt += "💎 Ender Pearl = Diamond ×2\n\n"
+    txt += "Use /buy apple\n"
+    txt += "Use /buy beef\n"
+    txt += "Use /buy bread\n"
+    txt += "Use /buy pearl"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_trade")
+@safe_session
+def village_trade(call):
+    session.rollback()
+    txt = "🏅 **Trade with Villagers**\n\n"
+    txt += "1️⃣ Farmer: 5 Wheat → 3 Bread\n"
+    txt += "2️⃣ Blacksmith: 3 Iron → 1 Iron Sword\n"
+    txt += "3️⃣ Hunter: 8 Feathers → 1 Bow\n"
+    txt += "4️⃣ Merchant: 2 Diamonds → 1 Golden Apple\n\n"
+    txt += "Use /trade 1\n"
+    txt += "Use /trade 2\n"
+    txt += "Use /trade 3\n"
+    txt += "Use /trade 4"
+    edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
+
+@bot.callback_query_handler(func=lambda c: c.data == "v_champion")
+@safe_session
+def village_champion(call):
+    session.rollback()
+    p, _ = get_player(session, call.from_user.id)
+    if p.level >= 20:
+        p.add_xp(10)
+        p.add_item("diamond", 1)
+        session.commit()
+        edit_msg(bot, call.message.chat.id, call.message.message_id, "⚔️ **Village Champion**\n\n🏅 You are the Village Champion!\n⭐ Daily reward: 10 XP + 1 Diamond")
+    else:
+        edit_msg(bot, call.message.chat.id, call.message.message_id, f"⚔️ **Village Champion**\n\n📊 You need level 20 to become Champion\n📈 Your current level: {p.level}")
+
+@bot.message_handler(commands=['buy'])
+@safe_session
+def buy(msg):
+    session.rollback()
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "❌ Use: /buy apple\n/buy beef\n/buy bread\n/buy pearl")
+    
+    shop = {
+        "apple": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
+        "beef": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
+        "bread": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2},
+        "pearl": {"price": "diamond", "amt": 2, "give": "ender_pearl", "gamt": 1},
+    }
+    
+    item = args[1]
+    if item not in shop:
+        return bot.send_message(msg.chat.id, "❌ Item not available!\nAvailable: apple, beef, bread, pearl")
+    
+    s = shop[item]
+    if p.has_item(s["price"], s["amt"]):
+        p.remove_item(s["price"], s["amt"])
+        p.add_item(s["give"], s["gamt"])
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ Bought {item} x{s['gamt']}!")
+    else:
+        bot.send_message(msg.chat.id, f"❌ You need {s['amt']} {s['price']}")
+
+@bot.message_handler(commands=['trade'])
+@safe_session
+def trade(msg):
+    session.rollback()
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "❌ Use: /trade 1\n/trade 2\n/trade 3\n/trade 4")
+    
+    try:
+        trade_num = int(args[1])
+    except:
+        return bot.send_message(msg.chat.id, "❌ Invalid number")
+    
+    trades = {
+        1: {"name": "Farmer", "in": "wheat", "in_amt": 5, "out": "bread", "out_amt": 3},
+        2: {"name": "Blacksmith", "in": "iron_ore", "in_amt": 3, "out": "iron_sword", "out_amt": 1},
+        3: {"name": "Hunter", "in": "feather", "in_amt": 8, "out": "bow", "out_amt": 1},
+        4: {"name": "Merchant", "in": "diamond", "in_amt": 2, "out": "golden_apple", "out_amt": 1},
+    }
+    
+    if trade_num not in trades:
+        return bot.send_message(msg.chat.id, "❌ Invalid number (1-4)")
+    
+    t = trades[trade_num]
+    if p.has_item(t["in"], t["in_amt"]):
+        p.remove_item(t["in"], t["in_amt"])
+        p.add_item(t["out"], t["out_amt"])
+        p.add_xp(5)
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ Traded with {t['name']}!\n🎁 {t['out']} x{t['out_amt']} +5XP")
+    else:
+        bot.send_message(msg.chat.id, f"❌ You need {t['in_amt']} {t['in']}")
+
+# ===============================
+# 18. الرجوع والتشغيل
+# ===============================
+
+@bot.message_handler(func=lambda m: m.text == "🔙 Back")
 @safe_session
 def go_back(msg):
     session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     
-    # إذا كان في النذر، اسأل إذا يريد الخروج
     if p.in_nether:
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(
-            types.InlineKeyboardButton("✅ نعم، اخرج", callback_data="nether_leave"),
-            types.InlineKeyboardButton("❌ لا، ابق", callback_data="nether_stay")
+            types.InlineKeyboardButton("✅ Yes, leave", callback_data="nether_leave"),
+            types.InlineKeyboardButton("❌ No, stay", callback_data="nether_stay")
         )
-        bot.send_message(msg.chat.id, "🔥 أنت في النذر! هل تريد العودة إلى العالم العادي؟", reply_markup=kb)
+        bot.send_message(msg.chat.id, "🔥 You are in the Nether! Do you want to return to the Overworld?", reply_markup=kb)
         return
     
     tod = p.get_time_of_day()
@@ -2853,10 +2885,10 @@ def nether_stay(call):
     session.rollback()
     p, _ = get_player(session, call.from_user.id)
     kb = nether.get_nether_menu()
-    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
+    edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **You are in the Nether!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
 
 # ===============================
-# 14. رايلوي - منفذ (مُعدل)
+# 19. رايلوي - منفذ (مُعدل)
 # ===============================
 
 def keep_alive():
@@ -2886,16 +2918,8 @@ def keep_alive():
     except Exception as e:
         print(f"⚠️ Flask error: {e}")
 
-@bot.message_handler(commands=['fixrecipes'])
-@safe_session
-def fix_recipes(msg):
-    p, _ = get_player(session, msg.from_user.id)
-    p.recipes_unlocked = ["base", "level_2", "level_3", "level_4", "level_5"]
-    session.commit()
-    bot.send_message(msg.chat.id, "✅ تم تحديث الوصفات! روح للتصنيع 🛠️")
-
 # ===============================
-# 15. تشغيل البوت (مُعدل)
+# 20. تشغيل البوت (مُعدل)
 # ===============================
 
 if __name__ == "__main__":
@@ -2903,9 +2927,11 @@ if __name__ == "__main__":
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
     print("🔥 Game is fully upgraded with logic!")
-    print("✨ Fixed: equipment, additem, shop, trade, nether, house drawing!")
-    print("✨ Fixed: Database session management with rollback!")
-    print("✨ Fixed: Crafting recipes update with player level!")
+    print("🐉 Dragon System: 3x stronger, 4 towers, 3 players max!")
+    print("✨ Added: Ender Pearl in shop!")
+    print("✨ Added: Help menu with full guide!")
+    print("✨ Added: Full 36-slot delete system!")
+    print("✨ All resources are in English!")
     print("="*50)
     
     Thread(target=keep_alive, daemon=True).start()
