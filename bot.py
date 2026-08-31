@@ -3512,6 +3512,69 @@ def keep_alive():
         print(f"⚠️ Flask error: {e}")
 
 # ===============================
+# تشخيص شامل للبوت
+# ===============================
+
+def diagnose_bot():
+    """تشخيص البوت وعرض تقرير كامل"""
+    print("\n" + "="*60)
+    print("🔍 تقرير تشخيص البوت")
+    print("="*60)
+    
+    # 1. فحص الأوامر
+    print("\n📋 الأوامر المسجلة:")
+    commands_found = []
+    for handler in bot.message_handlers:
+        if hasattr(handler, 'commands'):
+            for cmd in handler.commands:
+                commands_found.append(cmd)
+                print(f"  ✅ /{cmd}")
+    
+    if not commands_found:
+        print("  ❌ لا توجد أوامر مسجلة! البوت لن يستجيب لأي أمر.")
+    
+    # 2. فحص الـ Callbacks
+    print(f"\n📊 عدد معالجات الـ Callback: {len(bot.callback_query_handlers)}")
+    
+    # 3. فحص الـ Session
+    try:
+        # محاولة اتصال بقاعدة البيانات
+        test_session = Session()
+        test_session.execute(text("SELECT 1"))
+        test_session.close()
+        print("✅ اتصال قاعدة البيانات: يعمل")
+    except Exception as e:
+        print(f"❌ اتصال قاعدة البيانات: فشل - {e}")
+    
+    # 4. فحص الأعمدة المطلوبة
+    try:
+        inspector = inspect(engine)
+        if 'players' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('players')]
+            required = ['house_type', 'in_nether', 'temples_visited', 'temple_cooldown', 'dragon_party']
+            missing = [col for col in required if col not in columns]
+            if missing:
+                print(f"⚠️ أعمدة مفقودة: {', '.join(missing)}")
+            else:
+                print("✅ جميع الأعمدة المطلوبة موجودة")
+        else:
+            print("❌ جدول players غير موجود!")
+    except Exception as e:
+        print(f"⚠️ فشل فحص الأعمدة: {e}")
+    
+    # 5. ملخص
+    print("\n" + "="*60)
+    print(f"📊 الملخص:")
+    print(f"  • الأوامر: {len(commands_found)} أمر")
+    print(f"  • Callbacks: {len(bot.callback_query_handlers)} معالج")
+    print("="*60 + "\n")
+    
+    return commands_found
+
+# ===== تشغيل التشخيص =====
+diagnose_bot()
+
+# ===============================
 # 17. تشغيل البوت
 # ===============================
 
