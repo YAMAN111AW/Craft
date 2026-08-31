@@ -592,6 +592,75 @@ except Exception as e:
     Session = sessionmaker(bind=engine)
     print("✅ قاعدة بيانات SQLite جاهزة")
 
+# ===============================
+# 0.1 الصيانة التلقائية للقاعدة (تشغل مع البوت)
+# ===============================
+def auto_fix_database():
+    """
+    تفحص قاعدة البيانات عند بدء التشغيل وتصلح أي أعمدة مفقودة أو تالفة.
+    تعمل بشكل صامت بدون أي تدخل.
+    """
+    print("🔄 جاري فحص قاعدة البيانات وإصلاحها تلقائياً...")
+    try:
+        with engine.connect() as conn:
+            # 1. نتأكد من وجود الجدول الأساسي
+            inspector = inspect(engine)
+            if 'players' not in inspector.get_table_names():
+                print("⚠️ جدول players غير موجود! سيتم إنشاؤه.")
+                Base.metadata.create_all(engine)
+                print("✅ تم إنشاء الجدول بنجاح.")
+                return
+
+            # 2. قائمة الأعمدة المطلوبة (هذه هي أحدث نسخة للبوت)
+            required_columns = {
+                'house_type': 'VARCHAR(255)',
+                'in_nether': 'BOOLEAN DEFAULT FALSE',
+                'temples_visited': 'INTEGER DEFAULT 0',
+                'temple_cooldown': 'TIMESTAMP',
+                'dragon_party': 'JSON DEFAULT \'[]\'',  # عمود النظام الجماعي للتنين
+            }
+
+            # 3. جلب الأعمدة الموجودة حالياً في قاعدة البيانات
+            existing_columns = [col['name'] for col in inspector.get_columns('players')]
+            columns_added = 0
+
+            # 4. إضافة أي عمود مفقود
+            for col_name, col_type in required_columns.items():
+                if col_name not in existing_columns:
+                    try:
+                        print(f"🔧 إضافة عمود مفقود: {col_name} ({col_type})")
+                        conn.execute(text(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}"))
+                        columns_added += 1
+                    except Exception as e:
+                        # لو فشل الإضافة (مثلاً لوجود مشكلة)، نتجاوزها عشان ما يوقف البوت
+                        print(f"⚠️ فشل إضافة العمود {col_name}: {e}")
+            
+            # 5. نحاول ننظف أي بيانات مشوهة في الأعمدة المهمة (اختياري)
+            if columns_added > 0:
+                print(f"✅ تم إضافة {columns_added} عمود/أعمدة جديدة.")
+                
+                # لو أضفنا عمود dragon_party مثلاً، نحدّث السجلات القديمة بقيمة افتراضية
+                if 'dragon_party' in required_columns and 'dragon_party' not in existing_columns:
+                    conn.execute(text("UPDATE players SET dragon_party = '[]' WHERE dragon_party IS NULL"))
+                    
+            conn.commit()
+            
+    except Exception as e:
+        # أي خطأ في الصيانة، نطبع رسالة ونكمل عشان البوت ما يوقف
+        print(f"⚠️ حدث خطأ أثناء صيانة قاعدة البيانات: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print("✅ انتهى فحص قاعدة البيانات وإصلاحها.")
+
+# ===== تشغيل الصيانة التلقائية =====
+# تنفذ هذه الدالة فوراً عند بدء تشغيل البوت
+auto_fix_database()
+
+# ===============================
+# باقي كود البوت هنا...
+# ===============================
+
 def get_player(session, user_id, username=None):
     try:
         player = session.query(Player).filter_by(user_id=user_id).first()
