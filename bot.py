@@ -2470,6 +2470,69 @@ def equip_item(msg):
     
     bot.send_message(msg.chat.id, txt)
 
+@bot.message_handler(commands=['buy'])
+@safe_session
+def buy(msg):
+    session.rollback()
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "❌ استخدم: /buy تفاح\n/buy لحم\n/buy خبز\n/buy لؤلؤة")
+    
+    shop = {
+        "تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
+        "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
+        "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2},
+        "لؤلؤة": {"price": "diamond", "amt": 2, "give": "ender_pearl", "gamt": 1},
+    }
+    
+    item = args[1]
+    if item not in shop:
+        return bot.send_message(msg.chat.id, f"❌ العنصر '{item}' غير متوفر!\nالمتاح: تفاح، لحم، خبز، لؤلؤة")
+    
+    s = shop[item]
+    if p.has_item(s["price"], s["amt"]):
+        p.remove_item(s["price"], s["amt"])
+        p.add_item(s["give"], s["gamt"])
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ اشتريت {item} x{s['gamt']}!")
+    else:
+        bot.send_message(msg.chat.id, f"❌ تحتاج {s['amt']} {s['price']}")
+
+@bot.message_handler(commands=['trade'])
+@safe_session
+def trade(msg):
+    session.rollback()
+    p, _ = get_player(session, msg.from_user.id)
+    args = msg.text.split()
+    if len(args) < 2:
+        return bot.send_message(msg.chat.id, "❌ استخدم: /trade 1\n/trade 2\n/trade 3\n/trade 4")
+    
+    try:
+        trade_num = int(args[1])
+    except:
+        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح")
+    
+    trades = {
+        1: {"name": "فلاح", "in": "wheat", "in_amt": 5, "out": "bread", "out_amt": 3},
+        2: {"name": "حداد", "in": "iron_ore", "in_amt": 3, "out": "iron_sword", "out_amt": 1},
+        3: {"name": "صياد", "in": "feather", "in_amt": 8, "out": "bow", "out_amt": 1},
+        4: {"name": "تاجر", "in": "diamond", "in_amt": 2, "out": "golden_apple", "out_amt": 1},
+    }
+    
+    if trade_num not in trades:
+        return bot.send_message(msg.chat.id, "❌ رقم غير صحيح (1-4)")
+    
+    t = trades[trade_num]
+    if p.has_item(t["in"], t["in_amt"]):
+        p.remove_item(t["in"], t["in_amt"])
+        p.add_item(t["out"], t["out_amt"])
+        p.add_xp(5)
+        session.commit()
+        bot.send_message(msg.chat.id, f"✅ تم التبادل مع {t['name']}!\n🎁 {t['out']} x{t['out_amt']} +5XP")
+    else:
+        bot.send_message(msg.chat.id, f"❌ تحتاج {t['in_amt']} {t['in']}")
+
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
 @safe_session
 def area_menu(msg):
