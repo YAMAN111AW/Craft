@@ -2461,7 +2461,7 @@ def craft_menu(msg):
     kb = types.InlineKeyboardMarkup(row_width=1)
     txt = f"🛠️ **التصنيع**\n🕐 {p.get_time_of_day()}\n\n"
     if recipes:
-        for i, r in enumerate(recipes[:15]):
+        for i, r in enumerate(recipes):
             materials = ", ".join([f"{k}×{v}" for k, v in r['in'].items()])
             kb.add(types.InlineKeyboardButton(f"{r['emoji']} {r['name']} ({materials})", callback_data=f"craft_{i}"))
     else:
