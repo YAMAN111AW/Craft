@@ -138,7 +138,7 @@ import logging
 import time
 from telebot import types
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, Column, BigInteger, Integer, String, JSON, DateTime, Boolean, Text
+from sqlalchemy import create_engine, Column, BigInteger, Integer, String, JSON, DateTime, Boolean, Text, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 from threading import Thread, Lock
@@ -739,12 +739,12 @@ class WorldData:
     def get_random_event(is_night):
         if is_night:
             events = [
-                {"type": "loot", "msg": "🌙 وجدت صندوقاً في الظلام!", "item": random.choice(["coal", "iron_ore", "gold_ore"]), "amount": random.randint(2, 4)},
+                {"type": "loot", "msg": "🌙 وجدت صندوقاً في الظلام!", "item": "coal", "amount": random.randint(2, 4)},
                 {"type": "loot", "msg": "🕯️ شعلة مشتعلة!", "item": "torch", "amount": random.randint(4, 8)},
             ]
         else:
             events = [
-                {"type": "loot", "msg": "🎁 وجدت هدية على الأرض!", "item": random.choice(["apple", "bread", "coal", "feather"]), "amount": random.randint(2, 4)},
+                {"type": "loot", "msg": "🎁 وجدت هدية على الأرض!", "item": "apple", "amount": random.randint(2, 4)},
                 {"type": "loot", "msg": "🍯 خلية نحل!", "item": "honey", "amount": random.randint(3, 6)},
             ]
         return random.choice(events) if random.random() < 0.25 else None
@@ -1748,14 +1748,14 @@ class EnderDragonSystem:
 
 class NetherSystem:
     NETHER_ITEMS = {
-        "nether_wart": {"name": "نتي وارت", "emoji": "🌿"},
-        "blaze_rod": {"name": "عصا البلاز", "emoji": "🔥"},
-        "ghast_tear": {"name": "دمعة الغاست", "emoji": "💧"},
-        "magma_cream": {"name": "كريم الماجما", "emoji": "🟠"},
-        "netherite_scrap": {"name": "خردة النذريت", "emoji": "⚫"},
-        "gold_ore": {"name": "ذهب خام", "emoji": "✨"},
-        "soul_sand": {"name": "رمل الروح", "emoji": "🟤"},
-        "nether_brick": {"name": "طوب الجحيم", "emoji": "🧱"},
+        "nether_wart": {"name": "nether_wart", "emoji": "🌿"},
+        "blaze_rod": {"name": "blaze_rod", "emoji": "🔥"},
+        "ghast_tear": {"name": "ghast_tear", "emoji": "💧"},
+        "magma_cream": {"name": "magma_cream", "emoji": "🟠"},
+        "netherite_scrap": {"name": "netherite_scrap", "emoji": "⚫"},
+        "gold_ore": {"name": "gold_ore", "emoji": "✨"},
+        "soul_sand": {"name": "soul_sand", "emoji": "🟤"},
+        "nether_brick": {"name": "nether_brick", "emoji": "🧱"},
     }
     
     # أعداء النذر (أقوى)
@@ -1781,7 +1781,7 @@ class NetherSystem:
         if player.level < 10:
             return False, "❌ تحتاج مستوى 10 لدخول النذر!"
         if not player.has_item("eye_of_ender", 1):
-            return False, "❌ تحتاج عين إندر لفتح بوابة النذر!"
+            return False, "❌ تحتاج eye_of_ender لفتح بوابة النذر!"
         player.remove_item("eye_of_ender", 1)
         player.in_nether = True
         self.session.commit()
@@ -2156,13 +2156,13 @@ def help_menu(msg):
 
 🔥 النذر
 • المستوى 10+ للدخول
-• تحتاج عين إندر للبوابة
+• تحتاج eye_of_ender للبوابة
 • أعداء أقوياء ومكافآت نادرة
-• خردة النذريت، عصا البلاز، وغيرها
+• netherite_scrap, blaze_rod, وغيرها
 
 🐉 التنين - قتال جماعي!
 • المستوى 20+ للمشاركة
-• تحتاج سيفاً ألماسياً أو قوساً
+• تحتاج diamond_sword أو bow
 • 4 أبراج بلورات يجب كسرها
 • استخدم السيف للهجوم والقوس للأبراج
 • معركة بثلاث مراحل!
@@ -2180,7 +2180,7 @@ def help_menu(msg):
 
 ⚔️ القتال
 • استخدم /equip لتجهيز السلاح
-• السيوف: خشبي → حجري → حديدي → ألماسي
+• السيوف: wooden_sword → stone_sword → iron_sword → diamond_sword
 • الدروع تحمي من الهجمات
 • في الليل، الأعداء أقوى!
 
@@ -2477,18 +2477,18 @@ def buy(msg):
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
-        return bot.send_message(msg.chat.id, "❌ استخدم: /buy تفاح\n/buy لحم\n/buy خبز\n/buy لؤلؤة")
+        return bot.send_message(msg.chat.id, "❌ استخدم: /buy apple\n/buy cooked_beef\n/buy bread\n/buy ender_pearl")
     
     shop = {
-        "تفاح": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
-        "لحم": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
-        "خبز": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2},
-        "لؤلؤة": {"price": "diamond", "amt": 2, "give": "ender_pearl", "gamt": 1},
+        "apple": {"price": "oak_wood", "amt": 2, "give": "apple", "gamt": 3},
+        "cooked_beef": {"price": "iron_ore", "amt": 1, "give": "cooked_beef", "gamt": 1},
+        "bread": {"price": "wheat", "amt": 3, "give": "bread", "gamt": 2},
+        "ender_pearl": {"price": "diamond", "amt": 2, "give": "ender_pearl", "gamt": 1},
     }
     
     item = args[1]
     if item not in shop:
-        return bot.send_message(msg.chat.id, f"❌ العنصر '{item}' غير متوفر!\nالمتاح: تفاح، لحم، خبز، لؤلؤة")
+        return bot.send_message(msg.chat.id, f"❌ العنصر '{item}' غير متوفر!\nالمتاح: apple, cooked_beef, bread, ender_pearl")
     
     s = shop[item]
     if p.has_item(s["price"], s["amt"]):
@@ -3304,14 +3304,14 @@ def back_to_village(call):
 def village_shop(call):
     session.rollback()
     txt = "🛒 **متجر القرية**\n\n"
-    txt += "📦 تفاح = خشب بلوط ×2\n"
-    txt += "📦 لحم = حديد خام ×1\n"
-    txt += "📦 خبز = قمح ×3\n"
-    txt += "💎 لؤلؤة إندر = ألماس ×2\n\n"
-    txt += "استخدم /buy تفاح\n"
-    txt += "استخدم /buy لحم\n"
-    txt += "استخدم /buy خبز\n"
-    txt += "استخدم /buy لؤلؤة"
+    txt += "📦 apple = oak_wood ×2\n"
+    txt += "📦 cooked_beef = iron_ore ×1\n"
+    txt += "📦 bread = wheat ×3\n"
+    txt += "💎 ender_pearl = diamond ×2\n\n"
+    txt += "استخدم /buy apple\n"
+    txt += "استخدم /buy cooked_beef\n"
+    txt += "استخدم /buy bread\n"
+    txt += "استخدم /buy ender_pearl"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_trade")
@@ -3319,10 +3319,10 @@ def village_shop(call):
 def village_trade(call):
     session.rollback()
     txt = "🏅 **التبادل مع القرويين**\n\n"
-    txt += "1️⃣ فلاح: 5 قمح → 3 خبز\n"
-    txt += "2️⃣ حداد: 3 حديد → 1 سيف حديدي\n"
-    txt += "3️⃣ صياد: 8 ريش → 1 قوس\n"
-    txt += "4️⃣ تاجر: 2 ألماس → 1 تفاح ذهبي\n\n"
+    txt += "1️⃣ فلاح: 5 wheat → 3 bread\n"
+    txt += "2️⃣ حداد: 3 iron_ore → 1 iron_sword\n"
+    txt += "3️⃣ صياد: 8 feather → 1 bow\n"
+    txt += "4️⃣ تاجر: 2 diamond → 1 golden_apple\n\n"
     txt += "استخدم /trade 1\n"
     txt += "استخدم /trade 2\n"
     txt += "استخدم /trade 3\n"
@@ -3338,7 +3338,7 @@ def village_champion(call):
         p.add_xp(10)
         p.add_item("diamond", 1)
         session.commit()
-        edit_msg(bot, call.message.chat.id, call.message.message_id, "⚔️ **بطل القرية**\n\n🏅 أنت بطل القرية!\n⭐ مكافأة يومية: 10 XP + 1 ألماس")
+        edit_msg(bot, call.message.chat.id, call.message.message_id, "⚔️ **بطل القرية**\n\n🏅 أنت بطل القرية!\n⭐ مكافأة يومية: 10 XP + 1 diamond")
     else:
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"⚔️ **بطل القرية**\n\n📊 تحتاج مستوى 20 لتصبح بطلاً\n📈 مستواك الحالي: {p.level}")
 
@@ -3407,10 +3407,10 @@ def nether_info(call):
     txt += "🎁 مكافآت: نادرة وقوية\n"
     txt += "⚠️ خطر: الحمم والأعداء في كل مكان\n\n"
     txt += "**المعادن النادرة:**\n"
-    txt += "⚫ خردة النذريت\n"
-    txt += "🔥 عصا البلاز\n"
-    txt += "💧 دمعة الغاست\n"
-    txt += "🟠 كريم الماجما"
+    txt += "⚫ netherite_scrap\n"
+    txt += "🔥 blaze_rod\n"
+    txt += "💧 ghast_tear\n"
+    txt += "🟠 magma_cream"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_leave")
@@ -3653,6 +3653,7 @@ if __name__ == "__main__":
     print("   • Sword + Bow combat")
     print("✨ Inventory shows ALL items!")
     print("✨ All callbacks are written in full!")
+    print("✨ All items in ENGLISH!")
     print("="*50)
     
     Thread(target=keep_alive, daemon=True).start()
