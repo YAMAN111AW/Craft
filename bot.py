@@ -561,6 +561,35 @@ class Player(Base):
             if self.level >= lvl and t not in titles:
                 titles.append(t)
         self.titles = titles
+    
+    def reset_player(self):
+        """إعادة تعيين اللاعب بالكامل"""
+        self.level = 1
+        self.xp = 0
+        self.skill_points = 0
+        self.max_health = 20
+        self.current_health = 20
+        self.max_hunger = 20
+        self.current_hunger = 20
+        self.strength = 0
+        self.speed = 0
+        self.endurance = 0
+        self.luck = 0
+        self.inventory = json.dumps({f"slot_{i}": None for i in range(36)})
+        self.equipment = json.dumps({"helmet": None, "chestplate": None, "leggings": None, "boots": None, "weapon": None, "shield": None})
+        self.current_area = "forest"
+        self.game_time = 0
+        self.titles = []
+        self.recipes_unlocked = ["base"]
+        self.defeated_ender_dragon = False
+        self.pet = None
+        self.temples_visited = 0
+        self.in_nether = False
+        self.house_type = None
+        self.dragon_party = []
+        self.status_effects = []
+        self.is_exploring = False
+        self.explore_end_time = None
 
 # ===============================
 # 2. إعداد قاعدة البيانات
@@ -617,7 +646,7 @@ def auto_fix_database():
                 'in_nether': 'BOOLEAN DEFAULT FALSE',
                 'temples_visited': 'INTEGER DEFAULT 0',
                 'temple_cooldown': 'TIMESTAMP',
-                'dragon_party': 'JSON DEFAULT \'[]\'',  # عمود النظام الجماعي للتنين
+                'dragon_party': 'JSON DEFAULT \'[]\'',
             }
 
             # 3. جلب الأعمدة الموجودة حالياً في قاعدة البيانات
@@ -654,7 +683,6 @@ def auto_fix_database():
     print("✅ انتهى فحص قاعدة البيانات وإصلاحها.")
 
 # ===== تشغيل الصيانة التلقائية =====
-# تنفذ هذه الدالة فوراً عند بدء تشغيل البوت
 auto_fix_database()
 
 # ===============================
@@ -1297,7 +1325,7 @@ class TempleSystem:
         return kb
 
 # ===============================
-# 8. نظام التنين المتطور 🐉💪
+# 8. نظام التنين المتطور 🐉💪 (مُصحح)
 # ===============================
 
 class EnderDragonSystem:
@@ -1305,15 +1333,14 @@ class EnderDragonSystem:
         self.session = session
         self.dragon_active = False
         self.dragon_hp = 0
-        self.dragon_max_hp = 300  # 🔥 أقوى بثلاث مرات!
-        self.dragon_phase = 1  # 1-3 مراحل
-        self.crystals = []  # أبراج البلورات
-        self.fighters = {}  # {user_id: {"damage": 0, "crystals_broken": 0}}
+        self.dragon_max_hp = 300
+        self.dragon_phase = 1
+        self.crystals = []
+        self.fighters = {}
         self.dragon_spawn_time = None
         self.fight_lock = Lock()
         self.attack_cooldown = {}
         
-        # أنماط هجوم التنين
         self.ATTACK_PATTERNS = {
             "fire_breath": {"damage": 20, "cooldown": 3, "emoji": "🔥", "name": "أنفاس النار"},
             "dive_bomb": {"damage": 30, "cooldown": 5, "emoji": "💨", "name": "انقضاض جوي"},
@@ -1329,9 +1356,9 @@ class EnderDragonSystem:
         if player.level < 20:
             return False, "❌ تحتاج مستوى 20 لمواجهة التنين!"
         if not player.has_item("eye_of_ender", 3):
-            return False, "❌ تحتاج 3 عيون إندر لفتح البوابة!"
+            return False, "❌ تحتاج 3 eye_of_ender لفتح البوابة!"
         if not player.has_item("diamond_sword") and not player.has_item("bow"):
-            return False, "❌ تحتاج سيفاً ألماسياً أو قوساً لمواجهة التنين!"
+            return False, "❌ تحتاج diamond_sword أو bow لمواجهة التنين!"
         if player.defeated_ender_dragon:
             return False, "✅ لقد هزمت التنين بالفعل!"
         return True, "✅ جاهز لمواجهة التنين!"
@@ -1342,22 +1369,18 @@ class EnderDragonSystem:
             return False, msg
         
         with self.fight_lock:
-            # خصم العيون
             player.remove_item("eye_of_ender", 3)
             
-            # بدء المعركة
             self.dragon_active = True
             self.dragon_hp = self.dragon_max_hp
             self.dragon_phase = 1
             self.dragon_spawn_time = datetime.utcnow()
             
-            # إنشاء 4 أبراج بلورات (يجب كسرها بالقوس)
             self.crystals = [
                 {"id": i, "hp": 30, "x": (i-2)*20, "z": (i%2)*20, "active": True, "armor": 5}
                 for i in range(4)
             ]
             
-            # تسجيل المقاتل
             self.fighters[player.user_id] = {
                 "damage": 0, 
                 "crystals_broken": 0,
@@ -1370,17 +1393,13 @@ class EnderDragonSystem:
         return True, self.get_fight_status(player)
     
     def get_fight_status(self, player=None):
-        """الحصول على حالة المعركة الحالية"""
         if not self.dragon_active:
             return "🐉 التنين في سبات عميق..."
         
         active_crystals = sum(1 for c in self.crystals if c["active"])
         players_count = len(self.fighters)
-        
-        # حساب الضرر الكلي للمقاتلين
         total_damage = sum(f["damage"] for f in self.fighters.values())
         
-        # تحديد المرحلة
         hp_percent = (self.dragon_hp / self.dragon_max_hp) * 100
         if hp_percent < 30:
             phase_text = "💢 **المرحلة 3 - غضب التنين!**"
@@ -1389,7 +1408,6 @@ class EnderDragonSystem:
         else:
             phase_text = "🌟 **المرحلة 1 - بداية القتال**"
         
-        # عرض حالة المقاتل إن وجد
         player_status = ""
         if player and player.user_id in self.fighters:
             f = self.fighters[player.user_id]
@@ -1415,74 +1433,66 @@ class EnderDragonSystem:
 • /dragon_status - تحديث الحالة"""
     
     def player_attack_sword(self, player):
-        """هجوم بالسيف على التنين"""
         if not self.dragon_active:
             return False, "❌ لا يوجد تنين!"
         
-        if not player.has_item("diamond_sword"):
-            return False, "❌ تحتاج سيفاً ألماسياً للهجوم!"
+        if not player.has_item("diamond_sword", 1):
+            return False, "❌ تحتاج diamond_sword للهجوم!\nاستخدم /equip diamond_sword"
         
-        # حساب الضرر
         base_damage = 8 + player.strength
         base_damage += random.randint(5, 12)
         
-        # مكافأة الصدرية النارية
         eq = player.get_equip()
         if eq.get("chestplate") == "fire_chestplate":
             base_damage += 5
         
-        # ضربة حاسمة
         if random.random() < 0.2 + (player.luck / 100):
             base_damage = int(base_damage * 2.5)
             crit_msg = "💥 **ضربة حاسمة!**"
         else:
             crit_msg = ""
         
-        # خصم الصحة
         self.dragon_hp = max(0, self.dragon_hp - base_damage)
         
-        # تسجيل الضرر
         if player.user_id in self.fighters:
             self.fighters[player.user_id]["damage"] += base_damage
         
-        # التنين يرد
-        dragon_response = self.dragon_turn(player)
-        
         self.session.commit()
         
-        # التحقق من الفوز
         if self.dragon_hp <= 0:
             return self.dragon_defeated(player)
         
-        # التحقق من المرحلة
         self.check_phase()
+        
+        dragon_response = self.dragon_turn(player)
+        
+        if player.current_health <= 0:
+            return False, f"⚔️ **هجوم بالسيف!**\n{crit_msg}\n💔 -{base_damage} صحة للتنين!\n\n{dragon_response}"
         
         response = f"⚔️ **هجوم بالسيف!**\n"
         if crit_msg:
             response += f"{crit_msg}\n"
-        response += f"💔 -{base_damage} صحة للتنين!\n\n"
+        response += f"💔 -{base_damage} صحة للتنين!\n"
+        response += f"❤️ صحتك: {player.current_health}/{player.max_health}\n\n"
         response += dragon_response
         
         return True, response
     
     def player_shoot_bow(self, player):
-        """إطلاق سهم - لكسر الأبراج أو إيذاء التنين"""
         if not self.dragon_active:
             return False, "❌ لا يوجد تنين!"
         
-        if not player.has_item("bow"):
-            return False, "❌ تحتاج قوساً!"
+        if not player.has_item("bow", 1):
+            return False, "❌ تحتاج bow!\nاستخدم /equip bow"
         
         if not player.has_item("arrow", 1):
-            return False, "❌ ليس لديك سهام!"
+            return False, "❌ ليس لديك arrow!\nاستخدم /additem arrow 5"
         
         player.remove_item("arrow", 1)
         
-        # اختيار الهدف
         active_crystals = [c for c in self.crystals if c["active"]]
         
         if active_crystals and random.random() < 0.6:
-            # استهدف برج
             crystal = random.choice(active_crystals)
             damage = random.randint(10, 20)
             crystal["hp"] -= damage
@@ -1500,11 +1510,19 @@ class EnderDragonSystem:
                 self.session.commit()
                 return True, f"🏹 **أصبت البرج #{crystal['id']+1}!**\n💔 -{damage} صحة للبرج\n📊 متبقي: {crystal['hp']}/30"
         else:
-            # استهدف التنين
             damage = random.randint(5, 15)
             if random.random() < 0.15:
                 damage = int(damage * 2)
+                self.dragon_hp = max(0, self.dragon_hp - damage)
+                
+                if player.user_id in self.fighters:
+                    self.fighters[player.user_id]["damage"] += damage
+                
                 self.session.commit()
+                
+                if self.dragon_hp <= 0:
+                    return self.dragon_defeated(player)
+                
                 return True, f"🏹 **سهم حاسم!**\n💔 -{damage} صحة للتنين!"
             
             self.dragon_hp = max(0, self.dragon_hp - damage)
@@ -1520,7 +1538,6 @@ class EnderDragonSystem:
             return True, f"🏹 **سهم!**\n💔 -{damage} صحة للتنين!"
     
     def destroy_crystal(self, player, crystal_id):
-        """تدمير برج معين"""
         if not self.dragon_active:
             return False, "❌ لا يوجد تنين!"
         
@@ -1531,26 +1548,29 @@ class EnderDragonSystem:
         if not crystal["active"]:
             return False, f"❌ البرج #{crystal_id} مدمر بالفعل!"
         
-        if not player.has_item("bow"):
-            return False, "❌ تحتاج قوساً لتدمير البرج!"
+        if not player.has_item("bow", 1):
+            return False, "❌ تحتاج bow لتدمير البرج!\nاستخدم /equip bow"
         
         if not player.has_item("arrow", 1):
-            return False, "❌ ليس لديك سهام!"
+            return False, "❌ ليس لديك arrow!\nاستخدم /additem arrow 5"
         
         player.remove_item("arrow", 1)
         
-        # تدمير البرج
         crystal["active"] = False
         self.dragon_hp = max(0, self.dragon_hp - 30)
         
         if player.user_id in self.fighters:
             self.fighters[player.user_id]["crystals_broken"] += 1
         
-        # ضرر ارتدادي
-        damage = random.randint(5, 15)
+        damage = random.randint(3, 8)
         player.current_health = max(0, player.current_health - damage)
         
         self.session.commit()
+        
+        if player.current_health <= 0:
+            gm.respawn(player)
+            self.session.commit()
+            return False, f"💀 مت! ضرر ارتدادي: -{damage} صحة\n🔄 تم إحياؤك في الغابة!"
         
         if self.dragon_hp <= 0:
             return self.dragon_defeated(player)
@@ -1558,12 +1578,11 @@ class EnderDragonSystem:
         return True, f"💎 **تم تدمير البرج #{crystal_id}!**\n💥 -30 صحة للتنين!\n💔 ضرر ارتدادي: -{damage} صحة لك!"
     
     def player_heal(self, player):
-        """استخدام جرعة شفاء"""
         if not self.dragon_active:
             return False, "❌ لا يوجد تنين!"
         
         if not player.has_item("healing_potion", 1):
-            return False, "❌ ليس لديك جرعة شفاء!"
+            return False, "❌ ليس لديك healing_potion!"
         
         player.remove_item("healing_potion", 1)
         heal_amount = random.randint(15, 25)
@@ -1577,13 +1596,11 @@ class EnderDragonSystem:
         return True, f"🧪 **استخدمت جرعة شفاء!**\n❤️ +{heal_amount} صحة!"
     
     def dragon_turn(self, player):
-        """دور التنين - هجوم ذكي مع تطور المراحل"""
         if not self.dragon_active or self.dragon_hp <= 0:
             return "🐉 التنين سقط!"
         
         hp_percent = (self.dragon_hp / self.dragon_max_hp) * 100
         
-        # اختيار الهجمات حسب المرحلة
         if hp_percent > 70:
             available_attacks = ["fire_breath", "tail_whip", "crystal_beam"]
         elif hp_percent > 30:
@@ -1591,14 +1608,11 @@ class EnderDragonSystem:
         else:
             available_attacks = ["ender_blast", "dive_bomb", "ender_storm", "summon_minions"]
         
-        # اختيار هجوم عشوائي مع مراعاة التبريد
         attack_name = random.choice(available_attacks)
         attack = self.ATTACK_PATTERNS[attack_name]
         
-        # حساب الضرر النهائي
         base_damage = attack["damage"]
         
-        # في المرحلة 3 (أقل من 30%)، الضرر أكبر
         if hp_percent < 30:
             base_damage = int(base_damage * 1.8)
             phase_text = "💢 **غضب التنين!** "
@@ -1608,15 +1622,17 @@ class EnderDragonSystem:
         else:
             phase_text = ""
         
-        # حساب دفاع اللاعب
         player_defense = gm.calc_defense(player)
         final_damage = max(5, base_damage - player_defense//2)
         
-        # تطبيق الضرر
         player.current_health = max(0, player.current_health - final_damage)
         self.session.commit()
         
-        # رسائل خاصة
+        if player.current_health <= 0:
+            gm.respawn(player)
+            self.session.commit()
+            return f"💀 **لقد مت!**\n{phase_text}{attack['emoji']} {attack['name']}\n💔 -{final_damage} صحة\n🔄 تم إحياؤك في الغابة!"
+        
         special_messages = {
             "fire_breath": "🔥 التنين ينفث النار!",
             "dive_bomb": "💨 التنين ينقض من الأعلى!",
@@ -1630,28 +1646,31 @@ class EnderDragonSystem:
         
         response = f"{phase_text}{special_messages.get(attack_name, attack['emoji'] + ' ' + attack['name'])}\n"
         response += f"💔 -{final_damage} صحة لك!\n"
+        response += f"❤️ صحتك المتبقية: {player.current_health}/{player.max_health}"
         
-        # إضافة تأثيرات خاصة
         if attack_name == "summon_minions":
             minions = ["إندر مان", "سكلتون ناري", "زلزال ناري"]
             summoned = random.sample(minions, random.randint(1, 2))
-            response += f"👾 استدعى: {', '.join(summoned)}!\n"
-            # ضرر إضافي من الحلفاء
+            response += f"\n👾 استدعى: {', '.join(summoned)}!"
+            
             extra_damage = random.randint(5, 10)
             player.current_health = max(0, player.current_health - extra_damage)
-            response += f"💔 هجوم الحلفاء: -{extra_damage} صحة!"
             self.session.commit()
+            response += f"\n💔 هجوم الحلفاء: -{extra_damage} صحة!"
+            
+            if player.current_health <= 0:
+                gm.respawn(player)
+                self.session.commit()
+                return f"💀 **لقد مت!**\n{response}\n🔄 تم إحياؤك في الغابة!"
         
         if attack_name == "ender_storm":
-            # تأثير عاصفة الإندر - يقلل الجوع
             player.current_hunger = max(0, player.current_hunger - 3)
-            response += f"🍖 العاصفة استنزفت جوعك!"
             self.session.commit()
+            response += f"\n🍖 العاصفة استنزفت جوعك!"
         
         return response
     
     def check_phase(self):
-        """تحديث المرحلة حسب الصحة المتبقية"""
         hp_percent = (self.dragon_hp / self.dragon_max_hp) * 100
         if hp_percent < 30:
             self.dragon_phase = 3
@@ -1661,18 +1680,15 @@ class EnderDragonSystem:
             self.dragon_phase = 1
     
     def dragon_defeated(self, player):
-        """معركة التنين - الفوز"""
         self.dragon_active = False
         player.defeated_ender_dragon = True
         
-        # مكافآت ضخمة
         xp_bonus = 200
         level_bonus = 3
         
         player.add_xp(xp_bonus)
         player.level += level_bonus
         
-        # مكافآت خاصة
         rewards = [
             ("diamond", 15),
             ("gold_ore", 30),
@@ -1688,7 +1704,6 @@ class EnderDragonSystem:
             player.add_item(item, amt)
             rewards_text.append(f"{item} x{amt}")
         
-        # لقب جديد
         titles = player.titles if isinstance(player.titles, list) else json.loads(player.titles or '[]')
         if "🏆 قاتل التنين" not in titles:
             titles.append("🏆 قاتل التنين")
@@ -1696,7 +1711,6 @@ class EnderDragonSystem:
         
         self.session.commit()
         
-        # حساب إحصائيات المعركة
         total_damage = sum(f["damage"] for f in self.fighters.values())
         total_crystals = sum(f["crystals_broken"] for f in self.fighters.values())
         
@@ -1719,7 +1733,6 @@ class EnderDragonSystem:
 **تهانينا! أنت أسطورة ماينكرافت!** 🐉👑"""
     
     def join_fight(self, player):
-        """انضمام لاعب جديد للمعركة"""
         if not self.dragon_active:
             return False, "❌ لا توجد معركة نشطة!"
         
@@ -1730,7 +1743,7 @@ class EnderDragonSystem:
             return False, "❌ تحتاج مستوى 20!"
         
         if not player.has_item("diamond_sword") and not player.has_item("bow"):
-            return False, "❌ تحتاج سيفاً ألماسياً أو قوساً!"
+            return False, "❌ تحتاج diamond_sword أو bow!"
         
         self.fighters[player.user_id] = {
             "damage": 0,
@@ -1758,7 +1771,6 @@ class NetherSystem:
         "nether_brick": {"name": "nether_brick", "emoji": "🧱"},
     }
     
-    # أعداء النذر (أقوى)
     NETHER_MOBS = [
         {"name": "بلاز", "emoji": "🔥", "hp": 35, "damage": 14, "xp": 25, 
          "drops": [("blaze_rod", 2, 0.7), ("fiery_coal", 1, 0.3)]},
@@ -1795,7 +1807,6 @@ class NetherSystem:
     def explore_nether(self, player):
         events = []
         
-        # 35% قتال مع عدو
         if random.random() < 0.35:
             mob = random.choice(self.NETHER_MOBS)
             events.append({
@@ -1804,7 +1815,6 @@ class NetherSystem:
                 'msg': f"⚔️ {mob['emoji']} {mob['name']} يهاجمك فجأة!"
             })
         
-        # 25% كنز
         if random.random() < 0.25:
             item = random.choice(list(self.NETHER_ITEMS.values()))
             amt = random.randint(2, 5 + (player.luck or 0) // 5)
@@ -1814,7 +1824,6 @@ class NetherSystem:
                 'msg': f"🎁 وجدت صندوقاً في الحمم! {item['emoji']} {item['name']} x{amt}!"
             })
         
-        # 15% فخ
         if random.random() < 0.15:
             damage = random.randint(5, 15)
             player.current_health = max(0, player.current_health - damage)
@@ -1823,7 +1832,6 @@ class NetherSystem:
                 'msg': f"💥 انفجرت أرض الحمم تحتك! -{damage} صحة"
             })
         
-        # 10% بوابة سرية (توصلك لكنز كبير)
         if random.random() < 0.1:
             big_rewards = [
                 {"name": "diamond", "emoji": "💎", "amt": random.randint(2, 5)},
@@ -1838,7 +1846,6 @@ class NetherSystem:
                 'msg': f"🌀 بوابة سرية! وجدت {reward['emoji']} {reward['name']} x{reward['amt']}!"
             })
         
-        # 5% زعيم
         if random.random() < 0.05:
             boss = self.NETHER_MOBS[-1]
             events.append({
@@ -1961,7 +1968,6 @@ class MinecraftHouseDrawer:
     
     @classmethod
     def draw_house(cls, house_type, show_owner=False, owner_name="", level=1):
-        """رسم بيت بمكعبات ماينكرافت"""
         if house_type not in cls.HOUSES:
             return "🏚️ لا يوجد بيت"
         
@@ -1983,8 +1989,6 @@ class MinecraftHouseDrawer:
     
     @classmethod
     def get_house_art(cls, player):
-        """جلب رسم البيت للاعب"""
-        # التحقق من وجود بناء قيد التنفيذ
         if player.user_id in building_system.building_progress:
             progress = building_system.building_progress[player.user_id]
             house_type = progress["house_type"]
@@ -2007,7 +2011,6 @@ class MinecraftHouseDrawer:
 
 ⏳ المرحلة: {building_system.BUILDING_STAGES[progress['current_stage']]['name']}"""
         
-        # إذا كان البيت مكتمل (من قاعدة البيانات)
         if player.house_type:
             return cls.draw_house(player.house_type, True, player.username, 1)
         
@@ -2039,16 +2042,14 @@ temple_puzzle_answers = {}
 
 # ===== Decorator لإدارة الجلسة بشكل آمن =====
 def safe_session(func):
-    """Decorator لضمان rollback قبل وبعد تنفيذ الدالة"""
     def wrapper(*args, **kwargs):
         try:
-            session.rollback()  # تنظيف أي جلسة معلقة
+            session.rollback()
             result = func(*args, **kwargs)
             return result
         except Exception as e:
             session.rollback()
             print(f"⚠️ Session error in {func.__name__}: {e}")
-            # محاولة إرسال رسالة خطأ للمستخدم إذا كان ذلك ممكناً
             try:
                 if args and hasattr(args[0], 'chat'):
                     bot.send_message(args[0].chat.id, "⚠️ حدث خطأ في قاعدة البيانات. حاول مرة أخرى.")
@@ -2060,13 +2061,11 @@ def safe_session(func):
 def menu(player=None):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     
-    # إذا كان اللاعب في النذر
     if player and player.in_nether:
         kb.add("🔥 النذر")
         kb.add("🔙 رجوع")
         return kb
     
-    # القائمة العادية (مع إضافة زر المساعدة)
     kb.add("🌳 الغابة", "🕳️ الكهف")
     kb.add("🏘️ القرية", "🎒 مخزوني")
     kb.add("🛠️ التصنيع", "🏠 بناء")
@@ -2096,6 +2095,84 @@ def update_time_and_events(player):
         session.commit()
     return time_of_day, events
 
+# ===============================
+# 12. أمر /reset - إعادة تعيين اللاعب
+# ===============================
+
+@bot.message_handler(commands=['reset'])
+@safe_session
+def reset_player(msg):
+    """إعادة تعيين اللاعب بالكامل"""
+    p, _ = get_player(session, msg.from_user.id)
+    
+    # تأكيد قبل الحذف
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("✅ نعم، أعد تعييني", callback_data="reset_confirm"),
+        types.InlineKeyboardButton("❌ لا، إلغاء", callback_data="reset_cancel")
+    )
+    
+    bot.send_message(
+        msg.chat.id,
+        "⚠️ **تحذير!**\n\nأنت على وشك إعادة تعيين حسابك بالكامل!\n\n"
+        "سيتم حذف:\n"
+        "• جميع المستويات والخبرة\n"
+        "• جميع العناصر والمعدات\n"
+        "• المنزل والبناء\n"
+        "• التقدم في اللعبة\n\n"
+        "هل أنت متأكد؟",
+        reply_markup=kb
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data == "reset_confirm")
+@safe_session
+def reset_confirm(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    # إعادة تعيين اللاعب
+    p.reset_player()
+    session.commit()
+    
+    # تنظيف الجلسات
+    uid = call.from_user.id
+    chop_sessions.pop(uid, None)
+    mine_sessions.pop(uid, None)
+    battle_sessions.pop(uid, None)
+    temple_puzzle_answers.pop(uid, None)
+    village_quests.pop(uid, None)
+    if uid in building_system.building_progress:
+        del building_system.building_progress[uid]
+    if uid in ender_dragon.fighters:
+        del ender_dragon.fighters[uid]
+    
+    edit_msg(
+        bot,
+        call.message.chat.id,
+        call.message.message_id,
+        "🔄 **تم إعادة تعيين حسابك بنجاح!**\n\n"
+        "🌟 مرحباً بك من جديد في عالم ماينكرافت!\n"
+        "استخدم الأزرار للبدء من جديد."
+    )
+    
+    # إرسال القائمة الرئيسية
+    tod = p.get_time_of_day()
+    txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
+    bot.send_message(call.message.chat.id, txt, reply_markup=menu(p))
+
+@bot.callback_query_handler(func=lambda c: c.data == "reset_cancel")
+@safe_session
+def reset_cancel(call):
+    edit_msg(
+        bot,
+        call.message.chat.id,
+        call.message.message_id,
+        "✅ تم إلغاء عملية إعادة التعيين."
+    )
+
+# ===============================
+# 13. باقي أوامر البوت
+# ===============================
+
 @bot.message_handler(commands=['start'])
 @safe_session
 def start(msg):
@@ -2108,13 +2185,12 @@ def start(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 # ===============================
-# 12. زر المساعدة - دليل المستخدم الشامل (بدون Markdown)
+# 14. زر المساعدة - دليل المستخدم الشامل
 # ===============================
 
 @bot.message_handler(func=lambda m: m.text == "📖 مساعدة")
 @safe_session
 def help_menu(msg):
-    """دليل المستخدم الشامل للعبة"""
     p, _ = get_player(session, msg.from_user.id)
     
     help_text = """
@@ -2136,7 +2212,7 @@ def help_menu(msg):
 
 🕳️ الكهف
 • تكسير الحجارة للحصول على المعادن
-• حجر → فحم → حديد → ذهب → ألماس
+• stone → coal → iron_ore → gold_ore → diamond
 • تحتاج معولاً لتكسير الحجارة!
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -2209,6 +2285,7 @@ def help_menu(msg):
 /additem اسم_العنصر العدد - إضافة عنصر (للمطور)
 /buy اسم_العنصر - شراء من المتجر
 /trade رقم - مبادلة مع القروي
+/reset - إعادة تعيين حسابك بالكامل
 
 🐉 أوامر التنين:
 /dragon_attack - هجوم بالسيف
@@ -2224,7 +2301,6 @@ def help_menu(msg):
 اقتراحاتك مرحب بها لتحسين اللعبة 🚀
 """
     
-    # إضافة زر العودة مع الحالة الحالية
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(types.InlineKeyboardButton("🔙 العودة للقائمة", callback_data="back_to_menu"))
     
@@ -2233,20 +2309,18 @@ def help_menu(msg):
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_menu")
 @safe_session
 def back_to_menu(call):
-    """العودة للقائمة الرئيسية من المساعدة"""
     p, _ = get_player(session, call.from_user.id)
     tod = p.get_time_of_day()
     txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, menu(p))
 
 # ===============================
-# 13. أوامر التنين المتطورة
+# 15. أوامر التنين المتطورة
 # ===============================
 
 @bot.message_handler(commands=['dragon_attack'])
 @safe_session
 def dragon_attack_cmd(msg):
-    """هجوم بالسيف على التنين"""
     p, _ = get_player(session, msg.from_user.id)
     
     if not ender_dragon.dragon_active:
@@ -2265,7 +2339,6 @@ def dragon_attack_cmd(msg):
 @bot.message_handler(commands=['dragon_shot'])
 @safe_session
 def dragon_shot_cmd(msg):
-    """إطلاق سهم - لكسر الأبراج أو إيذاء التنين"""
     p, _ = get_player(session, msg.from_user.id)
     
     if not ender_dragon.dragon_active:
@@ -2284,7 +2357,6 @@ def dragon_shot_cmd(msg):
 @bot.message_handler(commands=['dragon_crystal'])
 @safe_session
 def dragon_crystal_cmd(msg):
-    """كسر برج معين"""
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     
@@ -2312,7 +2384,6 @@ def dragon_crystal_cmd(msg):
 @bot.message_handler(commands=['dragon_heal'])
 @safe_session
 def dragon_heal_cmd(msg):
-    """استخدام جرعة شفاء"""
     p, _ = get_player(session, msg.from_user.id)
     
     if not ender_dragon.dragon_active:
@@ -2331,7 +2402,6 @@ def dragon_heal_cmd(msg):
 @bot.message_handler(commands=['dragon_join'])
 @safe_session
 def dragon_join_cmd(msg):
-    """الانضمام للمعركة الجماعية"""
     p, _ = get_player(session, msg.from_user.id)
     
     success, response = ender_dragon.join_fight(p)
@@ -2344,13 +2414,12 @@ def dragon_join_cmd(msg):
 @bot.message_handler(commands=['dragon_status'])
 @safe_session
 def dragon_status_cmd(msg):
-    """عرض حالة المعركة الحالية"""
     p, _ = get_player(session, msg.from_user.id)
     status = ender_dragon.get_fight_status(p)
     bot.send_message(msg.chat.id, status)
 
 # ===============================
-# 14. باقي أوامر البوت
+# 16. باقي أوامر البوت
 # ===============================
 
 @bot.message_handler(commands=['additem'])
@@ -2387,7 +2456,7 @@ def add_item_cmd(msg):
         "healing_potion", "enchanted_book",
         "wheat", "sap", "mushroom", "spider_silk", "spider_eye",
         "gunpowder", "rotten_flesh", "torch", "glass", "fence", "wooden_door",
-        "bear_meat", "bear_pelt", "saddle", "hoof"
+        "bear_meat", "bear_pelt", "saddle", "hoof", "dragon_head", "dragon_egg"
     ]
     
     if args[1] not in valid_items:
@@ -2532,6 +2601,10 @@ def trade(msg):
         bot.send_message(msg.chat.id, f"✅ تم التبادل مع {t['name']}!\n🎁 {t['out']} x{t['out_amt']} +5XP")
     else:
         bot.send_message(msg.chat.id, f"❌ تحتاج {t['in_amt']} {t['in']}")
+
+# ===============================
+# 17. الأزرار الرئيسية (الغابة، الكهف، القرية، الخ)
+# ===============================
 
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
 @safe_session
@@ -2806,10 +2879,11 @@ def go_back(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 # ===============================
-# 15. جميع Callbacks - مكتوبة كاملة
+# 18. جميع CALLBACKS - النسخة الكاملة
 # ===============================
 
-# Callbacks للغابة والكهف
+# ===== Callbacks للغابة والكهف (chop, mine, hunt) =====
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("chop_"))
 @safe_session
 def start_chop(call):
@@ -2931,6 +3005,8 @@ def hunt(call):
     txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
+# ===== Callbacks للمعبد =====
+
 @bot.callback_query_handler(func=lambda c: c.data == "temple_enter")
 @safe_session
 def enter_temple(call):
@@ -3018,6 +3094,8 @@ def temple_answer(call):
     kb = temple_system.get_temple_menu()
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ **نتيجة اللغز**\n\n{msg}", kb)
 
+# ===== Callbacks للاستكشاف =====
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("explore_"))
 @safe_session
 def explore(call):
@@ -3067,7 +3145,8 @@ def skip_temple(call):
     session.rollback()
     edit_msg(bot, call.message.chat.id, call.message.message_id, "🚶 واصلت طريقك...")
 
-# Callbacks للقتال
+# ===== Callbacks للقتال =====
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("battle_"))
 @safe_session
 def battle_action(call):
@@ -3119,7 +3198,8 @@ def battle_action(call):
     kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
-# Callbacks للتصنيع
+# ===== Callbacks للتصنيع =====
+
 @bot.callback_query_handler(func=lambda c: c.data == "furnace_menu")
 @safe_session
 def furnace_menu(call):
@@ -3167,7 +3247,8 @@ def do_craft(call):
         session.commit()
         bot.answer_callback_query(call.id, msg)
 
-# Callbacks للبناء
+# ===== Callbacks للبناء =====
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("build_"))
 @safe_session
 def start_build(call):
@@ -3235,7 +3316,8 @@ def cancel_build(call):
     else:
         bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
 
-# Callbacks للقرية
+# ===== Callbacks للقرية =====
+
 @bot.callback_query_handler(func=lambda c: c.data == "v_sleep")
 @safe_session
 def village_sleep(call):
@@ -3342,7 +3424,8 @@ def village_champion(call):
     else:
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"⚔️ **بطل القرية**\n\n📊 تحتاج مستوى 20 لتصبح بطلاً\n📈 مستواك الحالي: {p.level}")
 
-# Callbacks للحذف
+# ===== Callbacks للحذف =====
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
 @safe_session
 def delete_item(call):
@@ -3352,7 +3435,8 @@ def delete_item(call):
     session.commit()
     bot.answer_callback_query(call.id, f"✅ تم حذف الخانة {int(call.data.split('_')[1])+1}")
 
-# Callbacks للأكل
+# ===== Callbacks للأكل =====
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("eat_"))
 @safe_session
 def do_eat(call):
@@ -3368,7 +3452,8 @@ def do_eat(call):
             txt += "\n" + "\n".join(res['effects'])
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
-# Callbacks للمهارات
+# ===== Callbacks للمهارات =====
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sk_"))
 @safe_session
 def upgrade_skill(call):
@@ -3384,7 +3469,8 @@ def upgrade_skill(call):
         session.commit()
         bot.answer_callback_query(call.id, f"✅ {sk} +1")
 
-# Callbacks للنذر
+# ===== Callbacks للنذر =====
+
 @bot.callback_query_handler(func=lambda c: c.data == "nether_enter")
 @safe_session
 def nether_enter(call):
@@ -3498,7 +3584,8 @@ def nether_stay(call):
     kb = nether.get_nether_menu()
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
 
-# Callbacks للتنين
+# ===== Callbacks للتنين =====
+
 @bot.callback_query_handler(func=lambda c: c.data == "dragon_join_party")
 @safe_session
 def dragon_join_party_callback(call):
@@ -3528,7 +3615,8 @@ def dragon_status_callback(call):
     status = ender_dragon.get_fight_status(p)
     edit_msg(bot, call.message.chat.id, call.message.message_id, status)
 
-# Callbacks للتوقف
+# ===== Callbacks للتوقف =====
+
 @bot.callback_query_handler(func=lambda c: c.data == "stop")
 @safe_session
 def stop(call):
@@ -3543,8 +3631,55 @@ def stop(call):
         del building_system.building_progress[uid]
     edit_msg(bot, call.message.chat.id, call.message.message_id, "👋 تم التوقف")
 
+# ===== Callbacks لإعادة التعيين =====
+
+@bot.callback_query_handler(func=lambda c: c.data == "reset_confirm")
+@safe_session
+def reset_confirm(call):
+    p, _ = get_player(session, call.from_user.id)
+    
+    # إعادة تعيين اللاعب
+    p.reset_player()
+    session.commit()
+    
+    # تنظيف الجلسات
+    uid = call.from_user.id
+    chop_sessions.pop(uid, None)
+    mine_sessions.pop(uid, None)
+    battle_sessions.pop(uid, None)
+    temple_puzzle_answers.pop(uid, None)
+    village_quests.pop(uid, None)
+    if uid in building_system.building_progress:
+        del building_system.building_progress[uid]
+    if uid in ender_dragon.fighters:
+        del ender_dragon.fighters[uid]
+    
+    edit_msg(
+        bot,
+        call.message.chat.id,
+        call.message.message_id,
+        "🔄 **تم إعادة تعيين حسابك بنجاح!**\n\n"
+        "🌟 مرحباً بك من جديد في عالم ماينكرافت!\n"
+        "استخدم الأزرار للبدء من جديد."
+    )
+    
+    # إرسال القائمة الرئيسية
+    tod = p.get_time_of_day()
+    txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
+    bot.send_message(call.message.chat.id, txt, reply_markup=menu(p))
+
+@bot.callback_query_handler(func=lambda c: c.data == "reset_cancel")
+@safe_session
+def reset_cancel(call):
+    edit_msg(
+        bot,
+        call.message.chat.id,
+        call.message.message_id,
+        "✅ تم إلغاء عملية إعادة التعيين."
+                           )
+
 # ===============================
-# 16. رايلوي - منفذ
+# 19. رايلوي - منفذ
 # ===============================
 
 def keep_alive():
@@ -3575,85 +3710,22 @@ def keep_alive():
         print(f"⚠️ Flask error: {e}")
 
 # ===============================
-# تشخيص شامل للبوت
-# ===============================
-
-def diagnose_bot():
-    """تشخيص البوت وعرض تقرير كامل"""
-    print("\n" + "="*60)
-    print("🔍 تقرير تشخيص البوت")
-    print("="*60)
-    
-    # 1. فحص الأوامر
-    print("\n📋 الأوامر المسجلة:")
-    commands_found = []
-    for handler in bot.message_handlers:
-        if hasattr(handler, 'commands'):
-            for cmd in handler.commands:
-                commands_found.append(cmd)
-                print(f"  ✅ /{cmd}")
-    
-    if not commands_found:
-        print("  ❌ لا توجد أوامر مسجلة! البوت لن يستجيب لأي أمر.")
-    
-    # 2. فحص الـ Callbacks
-    print(f"\n📊 عدد معالجات الـ Callback: {len(bot.callback_query_handlers)}")
-    
-    # 3. فحص الـ Session
-    try:
-        # محاولة اتصال بقاعدة البيانات
-        test_session = Session()
-        test_session.execute(text("SELECT 1"))
-        test_session.close()
-        print("✅ اتصال قاعدة البيانات: يعمل")
-    except Exception as e:
-        print(f"❌ اتصال قاعدة البيانات: فشل - {e}")
-    
-    # 4. فحص الأعمدة المطلوبة
-    try:
-        inspector = inspect(engine)
-        if 'players' in inspector.get_table_names():
-            columns = [col['name'] for col in inspector.get_columns('players')]
-            required = ['house_type', 'in_nether', 'temples_visited', 'temple_cooldown', 'dragon_party']
-            missing = [col for col in required if col not in columns]
-            if missing:
-                print(f"⚠️ أعمدة مفقودة: {', '.join(missing)}")
-            else:
-                print("✅ جميع الأعمدة المطلوبة موجودة")
-        else:
-            print("❌ جدول players غير موجود!")
-    except Exception as e:
-        print(f"⚠️ فشل فحص الأعمدة: {e}")
-    
-    # 5. ملخص
-    print("\n" + "="*60)
-    print(f"📊 الملخص:")
-    print(f"  • الأوامر: {len(commands_found)} أمر")
-    print(f"  • Callbacks: {len(bot.callback_query_handlers)} معالج")
-    print("="*60 + "\n")
-    
-    return commands_found
-
-# ===== تشغيل التشخيص =====
-diagnose_bot()
-
-# ===============================
-# 17. تشغيل البوت
+# 20. تشغيل البوت
 # ===============================
 
 if __name__ == "__main__":
     print("="*50)
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
-    print("🐉 Dragon system UPGRADED!")
+    print("🐉 Dragon system UPGRADED & FIXED!")
     print("   • 300 HP (3x stronger)")
     print("   • 3 phases")
     print("   • 4 crystals/towers")
     print("   • Party fight system")
-    print("   • Sword + Bow combat")
-    print("✨ Inventory shows ALL items!")
-    print("✨ All callbacks are written in full!")
+    print("   • Sword + Bow combat (FIXED)")
     print("✨ All items in ENGLISH!")
+    print("✨ /reset command added!")
+    print("✨ ender_pearl crafting fixed!")
     print("="*50)
     
     Thread(target=keep_alive, daemon=True).start()
