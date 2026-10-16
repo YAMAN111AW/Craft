@@ -8,7 +8,6 @@ def fix_database():
     import psycopg2
     from urllib.parse import urlparse
     
-    # جلب رابط قاعدة البيانات
     database_url = os.getenv('DATABASE_URL')
     if not database_url:
         print("⚠️ No DATABASE_URL found, using SQLite")
@@ -18,7 +17,6 @@ def fix_database():
         database_url = database_url.replace('postgres://', 'postgresql://', 1)
     
     try:
-        # تحليل الرابط
         parsed = urlparse(database_url)
         dbname = parsed.path[1:]
         user = parsed.username
@@ -26,7 +24,6 @@ def fix_database():
         host = parsed.hostname
         port = parsed.port or 5432
         
-        # الاتصال بقاعدة البيانات مباشرة (بدون SQLAlchemy)
         conn = psycopg2.connect(
             dbname=dbname,
             user=user,
@@ -37,7 +34,6 @@ def fix_database():
         conn.autocommit = True
         cursor = conn.cursor()
         
-        # جلب الأعمدة الموجودة
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
@@ -45,7 +41,6 @@ def fix_database():
         """)
         existing_columns = [row[0] for row in cursor.fetchall()]
         
-        # الأعمدة المطلوبة
         required_columns = {
             'house_type': 'VARCHAR(255)',
             'in_nether': 'BOOLEAN DEFAULT FALSE',
@@ -54,7 +49,6 @@ def fix_database():
             'dragon_party': 'JSON DEFAULT \'[]\'',
         }
         
-        # إضافة الأعمدة المفقودة
         for col_name, col_type in required_columns.items():
             if col_name not in existing_columns:
                 print(f"🔧 Adding column: {col_name}")
@@ -68,48 +62,38 @@ def fix_database():
     except Exception as e:
         print(f"⚠️ Fix error: {e}")
 
-# ===== تشغيل الإصلاح =====
 fix_database()
 
 # ===============================
-# 0. PATCH لمشكلة Story - الحل النهائي
+# 0. PATCH لمشكلة Story
 # ===============================
 
 import sys
 import warnings
 warnings.filterwarnings("ignore")
 
-# ===== Patch شامل =====
 import telebot.types
 import json
 
-# 1. حذف Story إذا موجود
 if hasattr(telebot.types, 'Story'):
     del telebot.types.Story
     print("✅ Removed Story class")
 
-# 2. Patch لـ Message و Chat
 try:
-    # Patch Message
     if hasattr(telebot.types, 'Message'):
         original_message_init = telebot.types.Message.__init__
         
         def patched_message_init(self, *args, **kwargs):
-            # تنظيف الحقول
             kwargs.pop('story', None)
             kwargs.pop('sender_chat', None)
-            
-            # تنظيف chat إذا كان موجود
             if 'chat' in kwargs and isinstance(kwargs['chat'], dict):
                 kwargs['chat'].pop('story', None)
                 kwargs['chat'].pop('sender_chat', None)
-            
             return original_message_init(self, *args, **kwargs)
         
         telebot.types.Message.__init__ = patched_message_init
         print("✅ Message.__init__ patched!")
     
-    # Patch Chat
     if hasattr(telebot.types, 'Chat'):
         original_chat_init = telebot.types.Chat.__init__
         
@@ -139,52 +123,22 @@ import time
 from telebot import types
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, Column, BigInteger, Integer, String, JSON, DateTime, Boolean, Text, inspect, text
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 from sqlalchemy.orm.attributes import flag_modified
 from threading import Thread, Lock
 from flask import Flask
 
 # ===============================
-# 0. نظام البناء (مُعدل مع تحسين عرض الوقت)
+# 0. نظام البناء
 # ===============================
 
 class BuildingSystem:
     BUILDING_STAGES = {
-        "foundation": {
-            "name": "🏗️ الأساس",
-            "emoji": "🏗️",
-            "resources": {"stone": 10, "oak_wood": 5},
-            "time": 30,
-            "next": "walls"
-        },
-        "walls": {
-            "name": "🧱 الجدران",
-            "emoji": "🧱",
-            "resources": {"stone": 20, "oak_wood": 10, "iron_ore": 2},
-            "time": 45,
-            "next": "roof"
-        },
-        "roof": {
-            "name": "🏠 السقف",
-            "emoji": "🏠",
-            "resources": {"oak_wood": 15, "stone": 10, "spruce_wood": 5},
-            "time": 40,
-            "next": "doors"
-        },
-        "doors": {
-            "name": "🚪 الأبواب",
-            "emoji": "🚪",
-            "resources": {"oak_wood": 6, "iron_ore": 2, "crafting_table": 1},
-            "time": 25,
-            "next": "windows"
-        },
-        "windows": {
-            "name": "🪟 النوافذ",
-            "emoji": "🪟",
-            "resources": {"glass": 8, "iron_ore": 2, "stone": 4},
-            "time": 35,
-            "next": "complete"
-        }
+        "foundation": {"name": "🏗️ الأساس", "emoji": "🏗️", "resources": {"stone": 10, "oak_wood": 5}, "time": 30, "next": "walls"},
+        "walls": {"name": "🧱 الجدران", "emoji": "🧱", "resources": {"stone": 20, "oak_wood": 10, "iron_ore": 2}, "time": 45, "next": "roof"},
+        "roof": {"name": "🏠 السقف", "emoji": "🏠", "resources": {"oak_wood": 15, "stone": 10, "spruce_wood": 5}, "time": 40, "next": "doors"},
+        "doors": {"name": "🚪 الأبواب", "emoji": "🚪", "resources": {"oak_wood": 6, "iron_ore": 2, "crafting_table": 1}, "time": 25, "next": "windows"},
+        "windows": {"name": "🪟 النوافذ", "emoji": "🪟", "resources": {"glass": 8, "iron_ore": 2, "stone": 4}, "time": 35, "next": "complete"}
     }
     
     HOUSE_TYPES = {
@@ -306,11 +260,9 @@ class BuildingSystem:
         time_passed = (datetime.utcnow() - progress["started_at"]).total_seconds()
         time_needed = stage_info["time"]
         
-        # حساب الوقت المتبقي بشكل دقيق
         time_left = max(0, int(time_needed - time_passed))
         progress_percent = min(100, int((time_passed / time_needed) * 100))
         
-        # تحويل الوقت المتبقي إلى دقائق وثواني
         minutes = time_left // 60
         seconds = time_left % 60
         time_str = f"{minutes}د {seconds}ث" if minutes > 0 else f"{seconds}ث"
@@ -343,7 +295,7 @@ class BuildingSystem:
             player.strength += bonus.get("strength", 0)
             player.speed += bonus.get("speed", 0)
             player.luck += bonus.get("luck", 0)
-            player.house_type = progress["house_type"]  # حفظ نوع المنزل
+            player.house_type = progress["house_type"]
             del self.building_progress[player.user_id]
             self.session.commit()
             return True, f"🎉 اكتمل بناء {house['name']}!\n\nمكافآت:\n❤️ +{bonus.get('health', 0)} صحة\n🛡️ +{bonus.get('defense', 0)} دفاع\n🍀 +{bonus.get('luck', 0)} حظ"
@@ -410,11 +362,7 @@ class Player(Base):
     temple_cooldown = Column(DateTime, default=datetime.utcnow)
     
     in_nether = Column(Boolean, default=False)
-    
-    # تخزين نوع المنزل
     house_type = Column(String, default=None)
-    
-    # للقتال الجماعي
     dragon_party = Column(JSON, default=list)
     
     def get_inv(self):
@@ -563,7 +511,6 @@ class Player(Base):
         self.titles = titles
     
     def reset_player(self):
-        """إعادة تعيين اللاعب بالكامل"""
         self.level = 1
         self.xp = 0
         self.skill_points = 0
@@ -592,7 +539,7 @@ class Player(Base):
         self.explore_end_time = None
 
 # ===============================
-# 2. إعداد قاعدة البيانات
+# 2. إعداد قاعدة البيانات - مع scoped_session
 # ===============================
 
 def get_database_url():
@@ -607,32 +554,28 @@ DATABASE_URL = get_database_url()
 
 try:
     if 'sqlite' in DATABASE_URL:
-        engine = create_engine(DATABASE_URL, connect_args={'check_same_thread': False})
+        engine = create_engine(DATABASE_URL, connect_args={'check_same_thread': False}, pool_pre_ping=True)
     else:
-        engine = create_engine(DATABASE_URL, pool_size=5, max_overflow=10, pool_pre_ping=True)
+        engine = create_engine(DATABASE_URL, pool_size=5, max_overflow=10, pool_pre_ping=True, pool_recycle=3600)
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
+    # ✅ استخدام scoped_session لحل مشكلة Threads
+    Session = scoped_session(sessionmaker(bind=engine))
     print("✅ قاعدة بيانات متصلة بنجاح")
 except Exception as e:
     print(f"❌ خطأ: {e}")
     DATABASE_URL = 'sqlite:///mc.db'
     engine = create_engine(DATABASE_URL, connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
+    Session = scoped_session(sessionmaker(bind=engine))
     print("✅ قاعدة بيانات SQLite جاهزة")
 
 # ===============================
-# 0.1 الصيانة التلقائية للقاعدة (تشغل مع البوت)
+# 0.1 الصيانة التلقائية للقاعدة
 # ===============================
 def auto_fix_database():
-    """
-    تفحص قاعدة البيانات عند بدء التشغيل وتصلح أي أعمدة مفقودة أو تالفة.
-    تعمل بشكل صامت بدون أي تدخل.
-    """
     print("🔄 جاري فحص قاعدة البيانات وإصلاحها تلقائياً...")
     try:
         with engine.connect() as conn:
-            # 1. نتأكد من وجود الجدول الأساسي
             inspector = inspect(engine)
             if 'players' not in inspector.get_table_names():
                 print("⚠️ جدول players غير موجود! سيتم إنشاؤه.")
@@ -640,7 +583,6 @@ def auto_fix_database():
                 print("✅ تم إنشاء الجدول بنجاح.")
                 return
 
-            # 2. قائمة الأعمدة المطلوبة (هذه هي أحدث نسخة للبوت)
             required_columns = {
                 'house_type': 'VARCHAR(255)',
                 'in_nether': 'BOOLEAN DEFAULT FALSE',
@@ -649,11 +591,9 @@ def auto_fix_database():
                 'dragon_party': 'JSON DEFAULT \'[]\'',
             }
 
-            # 3. جلب الأعمدة الموجودة حالياً في قاعدة البيانات
             existing_columns = [col['name'] for col in inspector.get_columns('players')]
             columns_added = 0
 
-            # 4. إضافة أي عمود مفقود
             for col_name, col_type in required_columns.items():
                 if col_name not in existing_columns:
                     try:
@@ -661,33 +601,23 @@ def auto_fix_database():
                         conn.execute(text(f"ALTER TABLE players ADD COLUMN {col_name} {col_type}"))
                         columns_added += 1
                     except Exception as e:
-                        # لو فشل الإضافة (مثلاً لوجود مشكلة)، نتجاوزها عشان ما يوقف البوت
                         print(f"⚠️ فشل إضافة العمود {col_name}: {e}")
             
-            # 5. نحاول ننظف أي بيانات مشوهة في الأعمدة المهمة (اختياري)
             if columns_added > 0:
                 print(f"✅ تم إضافة {columns_added} عمود/أعمدة جديدة.")
-                
-                # لو أضفنا عمود dragon_party مثلاً، نحدّث السجلات القديمة بقيمة افتراضية
                 if 'dragon_party' in required_columns and 'dragon_party' not in existing_columns:
                     conn.execute(text("UPDATE players SET dragon_party = '[]' WHERE dragon_party IS NULL"))
                     
             conn.commit()
             
     except Exception as e:
-        # أي خطأ في الصيانة، نطبع رسالة ونكمل عشان البوت ما يوقف
         print(f"⚠️ حدث خطأ أثناء صيانة قاعدة البيانات: {e}")
         import traceback
         traceback.print_exc()
 
     print("✅ انتهى فحص قاعدة البيانات وإصلاحها.")
 
-# ===== تشغيل الصيانة التلقائية =====
 auto_fix_database()
-
-# ===============================
-# باقي كود البوت هنا...
-# ===============================
 
 def get_player(session, user_id, username=None):
     try:
@@ -701,7 +631,6 @@ def get_player(session, user_id, username=None):
     except Exception as e:
         session.rollback()
         print(f"⚠️ Error in get_player: {e}")
-        # محاولة مرة ثانية بعد rollback
         player = session.query(Player).filter_by(user_id=user_id).first()
         if not player:
             player = Player(user_id=user_id, username=username or f"Player_{user_id}")
@@ -800,7 +729,7 @@ class WorldData:
         }
 
 # ===============================
-# 4. نظام التصنيع (معدل)
+# 4. نظام التصنيع
 # ===============================
 
 class CraftingSystem:
@@ -915,7 +844,7 @@ class CraftingSystem:
         return True, f"🔥 تم صهر {item_name} ← {recipe['out']}! +3XP"
 
 # ===============================
-# 5. نظام اللعبة (مُعدل)
+# 5. نظام اللعبة
 # ===============================
 
 class GameMechanics:
@@ -986,7 +915,7 @@ class GameMechanics:
         speed = tool_speed.get(weapon, 1.0)
         level_bonus = max(0.7, 1 - (player.level * 0.015))
         strength_bonus = max(0.85, 1 - (player.strength * 0.02))
-        return max(0.5, base_time * speed * level_bonus * strength_bonus)
+        return max(0.3, base_time * speed * level_bonus * strength_bonus)
     
     def chop_block(self, player, tree):
         eq = player.get_equip()
@@ -1088,7 +1017,6 @@ class GameMechanics:
         dmg = 2
         eq = player.get_equip()
         w = eq.get("weapon")
-        # تقليل ضرر السيوف
         weapon_dmg = {"wooden_sword": 4, "stone_sword": 6, "iron_sword": 9, "diamond_sword": 12, "bow": 3}
         if w in weapon_dmg:
             dmg += weapon_dmg[w]
@@ -1119,12 +1047,9 @@ class GameMechanics:
         player.current_area = "forest"
         player.is_exploring = False
         player.game_time = 0
-        
-        # 🔥 إصلاح: إذا مات في النذر، نخرجه من النذر
         if player.in_nether:
             player.in_nether = False
             print(f"✅ Player {player.user_id} was in Nether, respawned to overworld")
-        
         self.session.commit()
     
     def eat(self, player, food):
@@ -1273,7 +1198,7 @@ class BattleSystem:
         return None, battle_data
 
 # ===============================
-# 7. نظام المعبد (مُعدل)
+# 7. نظام المعبد
 # ===============================
 
 class TempleSystem:
@@ -1325,7 +1250,7 @@ class TempleSystem:
         return kb
 
 # ===============================
-# 8. نظام التنين المتطور 🐉💪 (مُصحح)
+# 8. نظام التنين
 # ===============================
 
 class EnderDragonSystem:
@@ -1756,7 +1681,7 @@ class EnderDragonSystem:
         return True, f"👤 انضممت للمعركة!\n🐉 صحة التنين: {self.dragon_hp}/{self.dragon_max_hp}"
 
 # ===============================
-# 9. نظام النذر (مُعدل)
+# 9. نظام النذر
 # ===============================
 
 class NetherSystem:
@@ -1870,7 +1795,7 @@ class NetherSystem:
         return kb
 
 # ===============================
-# 10. رسم المنزل بمكعبات ماينكرافت
+# 10. رسم المنزل
 # ===============================
 
 class MinecraftHouseDrawer:
@@ -1879,15 +1804,7 @@ class MinecraftHouseDrawer:
         "wooden": {
             "name": "بيت خشبي",
             "emoji": "🏠",
-            "blocks": {
-                "wall": "🟫",
-                "roof": "🟩",
-                "door": "🟧",
-                "window": "🟦",
-                "chimney": "⬛",
-                "ground": "🟩",
-                "light": "🟨"
-            },
+            "blocks": {"wall": "🟫", "roof": "🟩", "door": "🟧", "window": "🟦", "chimney": "⬛", "ground": "🟩", "light": "🟨"},
             "layout": [
                 "  🟩🟩🟩  ",
                 " 🟩🟫🟫🟫🟩 ",
@@ -1901,15 +1818,7 @@ class MinecraftHouseDrawer:
         "stone": {
             "name": "بيت حجري",
             "emoji": "🏰",
-            "blocks": {
-                "wall": "⬜",
-                "roof": "⬛",
-                "door": "🟧",
-                "window": "🟦",
-                "chimney": "⬛",
-                "ground": "🟩",
-                "light": "🟨"
-            },
+            "blocks": {"wall": "⬜", "roof": "⬛", "door": "🟧", "window": "🟦", "chimney": "⬛", "ground": "🟩", "light": "🟨"},
             "layout": [
                 "  ⬛⬛⬛  ",
                 " ⬛⬜⬜⬜⬛ ",
@@ -1923,15 +1832,7 @@ class MinecraftHouseDrawer:
         "mansion": {
             "name": "قصر فاخر",
             "emoji": "🏛️",
-            "blocks": {
-                "wall": "🟪",
-                "roof": "🟨",
-                "door": "🟧",
-                "window": "🟦",
-                "chimney": "⬛",
-                "ground": "🟩",
-                "light": "🟨"
-            },
+            "blocks": {"wall": "🟪", "roof": "🟨", "door": "🟧", "window": "🟦", "chimney": "⬛", "ground": "🟩", "light": "🟨"},
             "layout": [
                 "  🟨🟨🟨  ",
                 " 🟨🟪🟪🟪🟨 ",
@@ -1945,15 +1846,7 @@ class MinecraftHouseDrawer:
         "nether": {
             "name": "بيت نذري",
             "emoji": "🔥",
-            "blocks": {
-                "wall": "🟥",
-                "roof": "🟧",
-                "door": "🟪",
-                "window": "🟨",
-                "chimney": "⬛",
-                "ground": "🟥",
-                "light": "🟧"
-            },
+            "blocks": {"wall": "🟥", "roof": "🟧", "door": "🟪", "window": "🟨", "chimney": "⬛", "ground": "🟥", "light": "🟧"},
             "layout": [
                 "  🟧🟧🟧  ",
                 " 🟧🟥🟥🟥🟧 ",
@@ -2017,7 +1910,7 @@ class MinecraftHouseDrawer:
         return "🏚️ لا يوجد بيت"
 
 # ===============================
-# 11. البوت (الكامل المُعدل)
+# 11. البوت - الإعداد الرئيسي
 # ===============================
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -2025,7 +1918,9 @@ if not TOKEN:
     print("❌ لم يتم العثور على TOKEN!")
     exit(1)
 
-bot = telebot.TeleBot(TOKEN)
+# ✅ threaded=False لمنع تعارض الجلسات
+bot = telebot.TeleBot(TOKEN, threaded=False)
+
 session = Session()
 gm = GameMechanics(session)
 battle_system = BattleSystem(session)
@@ -2040,22 +1935,34 @@ battle_sessions = {}
 village_quests = {}
 temple_puzzle_answers = {}
 
-# ===== Decorator لإدارة الجلسة بشكل آمن =====
+# ===== Decorator مُصلح =====
 def safe_session(func):
+    """
+    Decorator مُصلح:
+    - لا rollback في البداية (كان يسبب IllegalStateChangeError)
+    - لا raise (عشان البوت يكمل)
+    - rollback بحماية try/except
+    """
     def wrapper(*args, **kwargs):
         try:
-            session.rollback()
             result = func(*args, **kwargs)
             return result
         except Exception as e:
-            session.rollback()
-            print(f"⚠️ Session error in {func.__name__}: {e}")
+            print(f"⚠️ Error in {func.__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             try:
-                if args and hasattr(args[0], 'chat'):
-                    bot.send_message(args[0].chat.id, "⚠️ حدث خطأ في قاعدة البيانات. حاول مرة أخرى.")
+                session.rollback()
+            except Exception:
+                pass
+            try:
+                if args and hasattr(args[0], 'message'):
+                    bot.send_message(args[0].message.chat.id, "⚠️ حدث خطأ. حاول مرة أخرى.")
+                elif args and hasattr(args[0], 'chat'):
+                    bot.send_message(args[0].chat.id, "⚠️ حدث خطأ. حاول مرة أخرى.")
             except:
                 pass
-            raise
+            return None
     return wrapper
 
 def menu(player=None):
@@ -2084,7 +1991,10 @@ def edit_msg(bot, chat_id, msg_id, text, reply_markup=None):
         return True
     except Exception as e:
         if "message is not modified" not in str(e) and "message to edit not found" not in str(e):
-            bot.send_message(chat_id, text, reply_markup=reply_markup)
+            try:
+                bot.send_message(chat_id, text, reply_markup=reply_markup)
+            except:
+                pass
         return False
 
 def update_time_and_events(player):
@@ -2096,16 +2006,25 @@ def update_time_and_events(player):
     return time_of_day, events
 
 # ===============================
-# 12. أمر /reset - إعادة تعيين اللاعب
+# 12. أمر /start و/reset
 # ===============================
+
+@bot.message_handler(commands=['start'])
+@safe_session
+def start(msg):
+    p, new = get_player(session, msg.from_user.id, msg.from_user.first_name)
+    if new:
+        txt = "🌟 أهلاً بك في عالم ماينكرافت!\n\nاستخدم الأزرار للتنقل.\n📖 للتعليمات اضغط زر المساعدة"
+    else:
+        tod = p.get_time_of_day()
+        txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
+    bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 @bot.message_handler(commands=['reset'])
 @safe_session
 def reset_player(msg):
-    """إعادة تعيين اللاعب بالكامل"""
     p, _ = get_player(session, msg.from_user.id)
     
-    # تأكيد قبل الحذف
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("✅ نعم، أعد تعييني", callback_data="reset_confirm"),
@@ -2129,11 +2048,9 @@ def reset_player(msg):
 def reset_confirm(call):
     p, _ = get_player(session, call.from_user.id)
     
-    # إعادة تعيين اللاعب
     p.reset_player()
     session.commit()
     
-    # تنظيف الجلسات
     uid = call.from_user.id
     chop_sessions.pop(uid, None)
     mine_sessions.pop(uid, None)
@@ -2145,6 +2062,11 @@ def reset_confirm(call):
     if uid in ender_dragon.fighters:
         del ender_dragon.fighters[uid]
     
+    try:
+        bot.answer_callback_query(call.id, "✅ تم إعادة التعيين!")
+    except:
+        pass
+    
     edit_msg(
         bot,
         call.message.chat.id,
@@ -2154,7 +2076,6 @@ def reset_confirm(call):
         "استخدم الأزرار للبدء من جديد."
     )
     
-    # إرسال القائمة الرئيسية
     tod = p.get_time_of_day()
     txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
     bot.send_message(call.message.chat.id, txt, reply_markup=menu(p))
@@ -2162,6 +2083,10 @@ def reset_confirm(call):
 @bot.callback_query_handler(func=lambda c: c.data == "reset_cancel")
 @safe_session
 def reset_cancel(call):
+    try:
+        bot.answer_callback_query(call.id, "✅ تم الإلغاء")
+    except:
+        pass
     edit_msg(
         bot,
         call.message.chat.id,
@@ -2170,22 +2095,7 @@ def reset_cancel(call):
     )
 
 # ===============================
-# 13. باقي أوامر البوت
-# ===============================
-
-@bot.message_handler(commands=['start'])
-@safe_session
-def start(msg):
-    p, new = get_player(session, msg.from_user.id, msg.from_user.first_name)
-    if new:
-        txt = "🌟 أهلاً بك في عالم ماينكرافت!\n\nاستخدم الأزرار للتنقل.\n📖 للتعليمات اضغط زر المساعدة"
-    else:
-        tod = p.get_time_of_day()
-        txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
-    bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
-
-# ===============================
-# 14. زر المساعدة - دليل المستخدم الشامل
+# 13. زر المساعدة
 # ===============================
 
 @bot.message_handler(func=lambda m: m.text == "📖 مساعدة")
@@ -2234,15 +2144,12 @@ def help_menu(msg):
 • المستوى 10+ للدخول
 • تحتاج eye_of_ender للبوابة
 • أعداء أقوياء ومكافآت نادرة
-• netherite_scrap, blaze_rod, وغيرها
 
 🐉 التنين - قتال جماعي!
 • المستوى 20+ للمشاركة
 • تحتاج diamond_sword أو bow
 • 4 أبراج بلورات يجب كسرها
-• استخدم السيف للهجوم والقوس للأبراج
 • معركة بثلاث مراحل!
-• انضم للمعركة مع لاعبين آخرين!
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2250,7 +2157,6 @@ def help_menu(msg):
 • نوم لتجديد الصحة والجوع
 • مهام يومية للحصول على مكافآت
 • متجر لشراء الموارد
-• تبادل مع القرويين
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2262,30 +2168,12 @@ def help_menu(msg):
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-📊 المهارات
-• كل 5 مستويات تحصل على نقطة مهارة
-• القوة تزيد الضرر
-• السرعة تساعد في الهروب
-• التحمل يزيد الصحة
-• الحظ يزيد فرص السقوط النادر
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-💡 نصائح مهمة
-• حافظ على جوعك عالياً 🍖
-• نام في القرية لتجديد صحتك
-• استخدم الأدوات المناسبة لكل مهمة
-• خزن الموارد النادرة للتصنيع المتقدم
-• شارك في المعابد للحصول على كنوز
-
-━━━━━━━━━━━━━━━━━━━━━━
-
 🔧 الأوامر السريعة
 /equip اسم_الأداة - تجهيز أداة
-/additem اسم_العنصر العدد - إضافة عنصر (للمطور)
+/additem اسم_العنصر العدد - إضافة عنصر
 /buy اسم_العنصر - شراء من المتجر
 /trade رقم - مبادلة مع القروي
-/reset - إعادة تعيين حسابك بالكامل
+/reset - إعادة تعيين حسابك
 
 🐉 أوامر التنين:
 /dragon_attack - هجوم بالسيف
@@ -2294,11 +2182,6 @@ def help_menu(msg):
 /dragon_heal - جرعة شفاء
 /dragon_join - الانضمام للمعركة
 /dragon_status - حالة المعركة
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-📱 طور اللعبة معنا!
-اقتراحاتك مرحب بها لتحسين اللعبة 🚀
 """
     
     kb = types.InlineKeyboardMarkup(row_width=1)
@@ -2315,7 +2198,7 @@ def back_to_menu(call):
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, menu(p))
 
 # ===============================
-# 15. أوامر التنين المتطورة
+# 14. أوامر التنين
 # ===============================
 
 @bot.message_handler(commands=['dragon_attack'])
@@ -2419,7 +2302,7 @@ def dragon_status_cmd(msg):
     bot.send_message(msg.chat.id, status)
 
 # ===============================
-# 16. باقي أوامر البوت
+# 15. أوامر أخرى
 # ===============================
 
 @bot.message_handler(commands=['additem'])
@@ -2542,7 +2425,6 @@ def equip_item(msg):
 @bot.message_handler(commands=['buy'])
 @safe_session
 def buy(msg):
-    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
@@ -2571,7 +2453,6 @@ def buy(msg):
 @bot.message_handler(commands=['trade'])
 @safe_session
 def trade(msg):
-    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     args = msg.text.split()
     if len(args) < 2:
@@ -2603,7 +2484,7 @@ def trade(msg):
         bot.send_message(msg.chat.id, f"❌ تحتاج {t['in_amt']} {t['in']}")
 
 # ===============================
-# 17. الأزرار الرئيسية (الغابة، الكهف، القرية، الخ)
+# 16. الأزرار الرئيسية
 # ===============================
 
 @bot.message_handler(func=lambda m: m.text in ["🌳 الغابة", "🕳️ الكهف"])
@@ -2679,7 +2560,6 @@ def craft_menu(msg):
 @bot.message_handler(func=lambda m: m.text == "🏠 بناء")
 @safe_session
 def building_menu(msg):
-    session.rollback()
     p, _ = get_player(session, msg.from_user.id)
     update_time_and_events(p)
     
@@ -2704,15 +2584,6 @@ def building_menu(msg):
             txt += f"📊 التقدم: {progress_bar} {status['progress']}%\n"
             txt += f"⏳ الوقت المتبقي: {status['time_left_str']}\n"
             
-            if status['progress'] < 30:
-                txt += "🔄 بداية العمل..."
-            elif status['progress'] < 60:
-                txt += "⚒️ جارٍ البناء..."
-            elif status['progress'] < 90:
-                txt += "🔨 يقترب من الانتهاء..."
-            else:
-                txt += "🎉 يكاد ينجز!"
-            
             kb = types.InlineKeyboardMarkup(row_width=2)
             kb.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="build_status"))
             kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="build_cancel"))
@@ -2721,7 +2592,7 @@ def building_menu(msg):
     
     available = building_system.get_available_houses(p)
     if not available:
-        return bot.send_message(msg.chat.id, "❌ ليس لديك مستوى كافٍ لبناء أي بيت\n\nالمستويات المطلوبة:\n🏠 خشبي: مستوى 1\n🏰 حجري: مستوى 5\n🏛️ قصر: مستوى 15")
+        return bot.send_message(msg.chat.id, "❌ ليس لديك مستوى كافٍ لبناء أي بيت")
     
     txt = "🏠 اختر نوع البيت الذي تريد بنائه:\n\n"
     kb = types.InlineKeyboardMarkup(row_width=1)
@@ -2814,7 +2685,7 @@ def nether_menu(msg):
         types.InlineKeyboardButton("🚪 دخول النذر", callback_data="nether_enter"),
         types.InlineKeyboardButton("ℹ️ معلومات", callback_data="nether_info")
     )
-    bot.send_message(msg.chat.id, "🔥 **النذر - عالم الجحيم**\n\n⚠️ منطقة خطيرة جداً!\n📍 المستوى المطلوب: 10\n💀 أعداء أقوياء ومكافآت نادرة", reply_markup=kb)
+    bot.send_message(msg.chat.id, "🔥 **النذر - عالم الجحيم**\n\n⚠️ منطقة خطيرة جداً!\n📍 المستوى المطلوب: 10", reply_markup=kb)
 
 @bot.message_handler(func=lambda m: m.text == "🐉 التنين")
 @safe_session
@@ -2879,15 +2750,18 @@ def go_back(msg):
     bot.send_message(msg.chat.id, txt, reply_markup=menu(p))
 
 # ===============================
-# 18. جميع CALLBACKS - النسخة الكاملة
+# 17. جميع CALLBACKS
 # ===============================
 
-# ===== Callbacks للغابة والكهف (chop, mine, hunt) =====
+# ===== الغابة والكهف =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("chop_"))
 @safe_session
 def start_chop(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     tree_name = call.data[5:]
     p, _ = get_player(session, call.from_user.id)
     if p.is_night():
@@ -2908,15 +2782,13 @@ def start_chop(call):
 @bot.callback_query_handler(func=lambda c: c.data == "do_chop")
 @safe_session
 def do_chop(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in chop_sessions:
         return bot.answer_callback_query(call.id, "انتهت الجلسة")
     data = chop_sessions[call.from_user.id]
     tree = data["tree"]
-    break_time = data.get("break_time", 2)
-    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... {break_time:.1f} ثانية", show_alert=True)
-    time.sleep(break_time)
+    bot.answer_callback_query(call.id, "⏳ جارٍ التكسير...")
+    time.sleep(0.3)  # ✅ خفيف
     data["blocks"] -= 1
     result = gm.chop_block(p, tree)
     session.commit()
@@ -2935,7 +2807,10 @@ def do_chop(call):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("mine_"))
 @safe_session
 def start_mine(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     rock_name = call.data[5:]
     p, _ = get_player(session, call.from_user.id)
     eq = p.get_equip()
@@ -2958,15 +2833,13 @@ def start_mine(call):
 @bot.callback_query_handler(func=lambda c: c.data == "do_mine")
 @safe_session
 def do_mine(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in mine_sessions:
         return bot.answer_callback_query(call.id, "انتهت الجلسة")
     data = mine_sessions[call.from_user.id]
     rock = data["rock"]
-    break_time = data.get("break_time", 3)
-    bot.answer_callback_query(call.id, f"⏳ جارٍ التكسير... {break_time:.1f} ثانية", show_alert=True)
-    time.sleep(break_time)
+    bot.answer_callback_query(call.id, "⏳ جارٍ التكسير...")
+    time.sleep(0.3)  # ✅ خفيف
     data["blocks"] -= 1
     result = gm.mine_block(p, rock)
     session.commit()
@@ -2989,7 +2862,6 @@ def do_mine(call):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("hunt_"))
 @safe_session
 def hunt(call):
-    session.rollback()
     animal_name = call.data[5:]
     p, _ = get_player(session, call.from_user.id)
     if p.is_night():
@@ -3002,15 +2874,19 @@ def hunt(call):
     session.commit()
     if "error" in result:
         return bot.answer_callback_query(call.id, result["error"])
+    bot.answer_callback_query(call.id, "✅ تم الصيد!")
     txt = f"🏹 صيد {animal_name}!\n\n🎁 {', '.join(result['rewards'])}"
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
-# ===== Callbacks للمعبد =====
+# ===== المعبد =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "temple_enter")
 @safe_session
 def enter_temple(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     result = temple_system.enter_temple(p)
     if result[0] == False:
@@ -3043,7 +2919,10 @@ def enter_temple(call):
 @bot.callback_query_handler(func=lambda c: c.data == "temple_explore")
 @safe_session
 def temple_explore(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     result = temple_system.enter_temple(p)
     if result[0] == False:
@@ -3076,13 +2955,15 @@ def temple_explore(call):
 @bot.callback_query_handler(func=lambda c: c.data == "temple_leave")
 @safe_session
 def temple_leave(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id, "🚪 خروج")
+    except:
+        pass
     edit_msg(bot, call.message.chat.id, call.message.message_id, "🚪 خرجت من المعبد")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("temple_answer_"))
 @safe_session
 def temple_answer(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in temple_puzzle_answers:
         return bot.answer_callback_query(call.id, "❌ انتهت جلسة المعبد")
@@ -3094,12 +2975,15 @@ def temple_answer(call):
     kb = temple_system.get_temple_menu()
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🏛️ **نتيجة اللغز**\n\n{msg}", kb)
 
-# ===== Callbacks للاستكشاف =====
+# ===== الاستكشاف =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("explore_"))
 @safe_session
 def explore(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id, "🔍 استكشاف...")
+    except:
+        pass
     area = call.data.split("_")[1]
     p, _ = get_player(session, call.from_user.id)
     time_of_day, events = update_time_and_events(p)
@@ -3142,15 +3026,21 @@ def explore(call):
 @bot.callback_query_handler(func=lambda c: c.data == "skip_temple")
 @safe_session
 def skip_temple(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     edit_msg(bot, call.message.chat.id, call.message.message_id, "🚶 واصلت طريقك...")
 
-# ===== Callbacks للقتال =====
+# ===== القتال =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("battle_"))
 @safe_session
 def battle_action(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in battle_sessions:
         return bot.answer_callback_query(call.id, "انتهى القتال")
@@ -3198,12 +3088,15 @@ def battle_action(call):
     kb.add(types.InlineKeyboardButton("🏃 هروب", callback_data="battle_run"))
     edit_msg(bot, call.message.chat.id, call.message.message_id, txt, kb)
 
-# ===== Callbacks للتصنيع =====
+# ===== التصنيع =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "furnace_menu")
 @safe_session
 def furnace_menu(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     if not p.has_item("furnace"):
         return bot.answer_callback_query(call.id, "❌ ليس لديك فرن!")
@@ -3222,7 +3115,6 @@ def furnace_menu(call):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("furnace_"))
 @safe_session
 def furnace_smelt_callback(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     success, msg = CraftingSystem.furnace_smelt(p, call.data[8:])
     session.commit()
@@ -3232,13 +3124,15 @@ def furnace_smelt_callback(call):
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_craft")
 @safe_session
 def back_to_craft(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     craft_menu(call.message)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("craft_"))
 @safe_session
 def do_craft(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     idx = int(call.data.split("_")[1])
     recipes = CraftingSystem.get_recipes(p)
@@ -3247,12 +3141,15 @@ def do_craft(call):
         session.commit()
         bot.answer_callback_query(call.id, msg)
 
-# ===== Callbacks للبناء =====
+# ===== البناء =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("build_"))
 @safe_session
 def start_build(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     success, msg = building_system.start_building(p, call.data[6:])
     session.commit()
@@ -3270,7 +3167,10 @@ def start_build(call):
 @bot.callback_query_handler(func=lambda c: c.data == "build_status")
 @safe_session
 def check_build_status(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     status = building_system.get_building_status(p)
     if not status:
@@ -3290,15 +3190,6 @@ def check_build_status(call):
     txt += f"📊 التقدم: {progress_bar} {status['progress']}%\n"
     txt += f"⏳ الوقت المتبقي: {status['time_left_str']}\n"
     
-    if status['progress'] < 30:
-        txt += "🔄 بداية العمل..."
-    elif status['progress'] < 60:
-        txt += "⚒️ جارٍ البناء..."
-    elif status['progress'] < 90:
-        txt += "🔨 يقترب من الانتهاء..."
-    else:
-        txt += "🎉 يكاد ينجز!"
-    
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(types.InlineKeyboardButton("🔄 تحديث", callback_data="build_status"))
     kb.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="build_cancel"))
@@ -3307,7 +3198,10 @@ def check_build_status(call):
 @bot.callback_query_handler(func=lambda c: c.data == "build_cancel")
 @safe_session
 def cancel_build(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     if p.user_id in building_system.building_progress:
         del building_system.building_progress[p.user_id]
@@ -3316,12 +3210,15 @@ def cancel_build(call):
     else:
         bot.answer_callback_query(call.id, "❌ لا يوجد بناء قيد التنفيذ")
 
-# ===== Callbacks للقرية =====
+# ===== القرية =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "v_sleep")
 @safe_session
 def village_sleep(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     result = gm.sleep(p)
     session.commit()
@@ -3333,7 +3230,10 @@ def village_sleep(call):
 @bot.callback_query_handler(func=lambda c: c.data == "v_quests")
 @safe_session
 def village_quests_menu(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     quests = [
         {"name": "الفلاح", "item": "wheat", "amount": 5, "reward": "bread", "reward_amt": 3, "xp": 10},
@@ -3354,7 +3254,6 @@ def village_quests_menu(call):
 @bot.callback_query_handler(func=lambda c: c.data == "quest_accept")
 @safe_session
 def accept_quest(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     if call.from_user.id not in village_quests:
         return bot.answer_callback_query(call.id, "❌ لا توجد مهمة نشطة")
@@ -3372,7 +3271,10 @@ def accept_quest(call):
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_village")
 @safe_session
 def back_to_village(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     update_time_and_events(p)
     kb = types.InlineKeyboardMarkup(row_width=2)
@@ -3384,7 +3286,10 @@ def back_to_village(call):
 @bot.callback_query_handler(func=lambda c: c.data == "v_shop")
 @safe_session
 def village_shop(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     txt = "🛒 **متجر القرية**\n\n"
     txt += "📦 apple = oak_wood ×2\n"
     txt += "📦 cooked_beef = iron_ore ×1\n"
@@ -3399,7 +3304,10 @@ def village_shop(call):
 @bot.callback_query_handler(func=lambda c: c.data == "v_trade")
 @safe_session
 def village_trade(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     txt = "🏅 **التبادل مع القرويين**\n\n"
     txt += "1️⃣ فلاح: 5 wheat → 3 bread\n"
     txt += "2️⃣ حداد: 3 iron_ore → 1 iron_sword\n"
@@ -3414,7 +3322,10 @@ def village_trade(call):
 @bot.callback_query_handler(func=lambda c: c.data == "v_champion")
 @safe_session
 def village_champion(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     if p.level >= 20:
         p.add_xp(10)
@@ -3424,23 +3335,21 @@ def village_champion(call):
     else:
         edit_msg(bot, call.message.chat.id, call.message.message_id, f"⚔️ **بطل القرية**\n\n📊 تحتاج مستوى 20 لتصبح بطلاً\n📈 مستواك الحالي: {p.level}")
 
-# ===== Callbacks للحذف =====
+# ===== الحذف =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
 @safe_session
 def delete_item(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     p.delete_slot(int(call.data.split("_")[1]))
     session.commit()
     bot.answer_callback_query(call.id, f"✅ تم حذف الخانة {int(call.data.split('_')[1])+1}")
 
-# ===== Callbacks للأكل =====
+# ===== الأكل =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("eat_"))
 @safe_session
 def do_eat(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     res = gm.eat(p, call.data[4:])
     session.commit()
@@ -3450,14 +3359,14 @@ def do_eat(call):
         txt = f"🍖 {res['food']} | +{res['hunger']} شبع | {res['current']}/20"
         if res.get('effects'):
             txt += "\n" + "\n".join(res['effects'])
+        bot.answer_callback_query(call.id, "✅")
         edit_msg(bot, call.message.chat.id, call.message.message_id, txt)
 
-# ===== Callbacks للمهارات =====
+# ===== المهارات =====
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sk_"))
 @safe_session
 def upgrade_skill(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     sk = call.data[3:]
     if p.skill_points > 0:
@@ -3469,12 +3378,15 @@ def upgrade_skill(call):
         session.commit()
         bot.answer_callback_query(call.id, f"✅ {sk} +1")
 
-# ===== Callbacks للنذر =====
+# ===== النذر =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "nether_enter")
 @safe_session
 def nether_enter(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     success, msg = nether.enter_nether(p)
     if success:
@@ -3486,7 +3398,10 @@ def nether_enter(call):
 @bot.callback_query_handler(func=lambda c: c.data == "nether_info")
 @safe_session
 def nether_info(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     txt = "🔥 **معلومات النذر**\n\n"
     txt += "📍 المستوى المطلوب: 10\n"
     txt += "💀 أعداء: أقوى من العالم العادي\n"
@@ -3502,7 +3417,6 @@ def nether_info(call):
 @bot.callback_query_handler(func=lambda c: c.data == "nether_leave")
 @safe_session
 def nether_leave(call):
-    session.rollback()
     p, _ = get_player(session, call.from_user.id)
     success, msg = nether.leave_nether(p)
     bot.answer_callback_query(call.id, msg)
@@ -3511,7 +3425,10 @@ def nether_leave(call):
 @bot.callback_query_handler(func=lambda c: c.data == "nether_inventory")
 @safe_session
 def nether_inventory(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     inv = p.get_inv()
     items = [(i, s) for i, s in enumerate(inv.values()) if s]
@@ -3526,7 +3443,10 @@ def nether_inventory(call):
 @bot.callback_query_handler(func=lambda c: c.data == "nether_status")
 @safe_session
 def nether_status(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     eq = p.get_equip()
     damage = gm.calc_damage(p)
@@ -3541,7 +3461,10 @@ def nether_status(call):
 @bot.callback_query_handler(func=lambda c: c.data == "nether_explore")
 @safe_session
 def nether_explore_callback(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id, "🔥 استكشاف...")
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     
     if not p.in_nether:
@@ -3551,7 +3474,7 @@ def nether_explore_callback(call):
         return bot.answer_callback_query(call.id, "❌ تحتاج مستوى 10!")
     
     if p.current_health <= 5:
-        return bot.answer_callback_query(call.id, "❤️ صحتك منخفضة! استرح قبل الاستكشاف!")
+        return bot.answer_callback_query(call.id, "❤️ صحتك منخفضة!")
     
     events = nether.explore_nether(p)
     session.commit()
@@ -3579,16 +3502,23 @@ def nether_explore_callback(call):
 @bot.callback_query_handler(func=lambda c: c.data == "nether_stay")
 @safe_session
 def nether_stay(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     kb = nether.get_nether_menu()
     edit_msg(bot, call.message.chat.id, call.message.message_id, f"🔥 **أنت في النذر!**\n\n❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20", kb)
 
-# ===== Callbacks للتنين =====
+# ===== التنين =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "dragon_join_party")
 @safe_session
 def dragon_join_party_callback(call):
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     success, response = ender_dragon.join_fight(p)
     if success:
@@ -3600,6 +3530,10 @@ def dragon_join_party_callback(call):
 @bot.callback_query_handler(func=lambda c: c.data == "dragon_fight")
 @safe_session
 def dragon_fight_callback(call):
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     success, msg = ender_dragon.start_dragon_fight(p)
     if success:
@@ -3611,16 +3545,23 @@ def dragon_fight_callback(call):
 @bot.callback_query_handler(func=lambda c: c.data == "dragon_status")
 @safe_session
 def dragon_status_callback(call):
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
     p, _ = get_player(session, call.from_user.id)
     status = ender_dragon.get_fight_status(p)
     edit_msg(bot, call.message.chat.id, call.message.message_id, status)
 
-# ===== Callbacks للتوقف =====
+# ===== التوقف =====
 
 @bot.callback_query_handler(func=lambda c: c.data == "stop")
 @safe_session
 def stop(call):
-    session.rollback()
+    try:
+        bot.answer_callback_query(call.id, "👋 تم التوقف")
+    except:
+        pass
     uid = call.from_user.id
     chop_sessions.pop(uid, None)
     mine_sessions.pop(uid, None)
@@ -3631,55 +3572,8 @@ def stop(call):
         del building_system.building_progress[uid]
     edit_msg(bot, call.message.chat.id, call.message.message_id, "👋 تم التوقف")
 
-# ===== Callbacks لإعادة التعيين =====
-
-@bot.callback_query_handler(func=lambda c: c.data == "reset_confirm")
-@safe_session
-def reset_confirm(call):
-    p, _ = get_player(session, call.from_user.id)
-    
-    # إعادة تعيين اللاعب
-    p.reset_player()
-    session.commit()
-    
-    # تنظيف الجلسات
-    uid = call.from_user.id
-    chop_sessions.pop(uid, None)
-    mine_sessions.pop(uid, None)
-    battle_sessions.pop(uid, None)
-    temple_puzzle_answers.pop(uid, None)
-    village_quests.pop(uid, None)
-    if uid in building_system.building_progress:
-        del building_system.building_progress[uid]
-    if uid in ender_dragon.fighters:
-        del ender_dragon.fighters[uid]
-    
-    edit_msg(
-        bot,
-        call.message.chat.id,
-        call.message.message_id,
-        "🔄 **تم إعادة تعيين حسابك بنجاح!**\n\n"
-        "🌟 مرحباً بك من جديد في عالم ماينكرافت!\n"
-        "استخدم الأزرار للبدء من جديد."
-    )
-    
-    # إرسال القائمة الرئيسية
-    tod = p.get_time_of_day()
-    txt = f"👋 {p.username}\n⭐ Lv.{p.level} | ❤️ {p.current_health}/{p.max_health} | 🍖 {p.current_hunger}/20\n🕐 {tod}"
-    bot.send_message(call.message.chat.id, txt, reply_markup=menu(p))
-
-@bot.callback_query_handler(func=lambda c: c.data == "reset_cancel")
-@safe_session
-def reset_cancel(call):
-    edit_msg(
-        bot,
-        call.message.chat.id,
-        call.message.message_id,
-        "✅ تم إلغاء عملية إعادة التعيين."
-                           )
-
 # ===============================
-# 19. رايلوي - منفذ
+# 18. رايلوي
 # ===============================
 
 def keep_alive():
@@ -3710,35 +3604,42 @@ def keep_alive():
         print(f"⚠️ Flask error: {e}")
 
 # ===============================
-# 20. تشغيل البوت
+# 19. تشغيل البوت
 # ===============================
 
 if __name__ == "__main__":
     print("="*50)
     print("🤖 Minecraft Bot is starting...")
     print("✅ Everything is ready!")
-    print("🐉 Dragon system UPGRADED & FIXED!")
-    print("   • 300 HP (3x stronger)")
-    print("   • 3 phases")
-    print("   • 4 crystals/towers")
-    print("   • Party fight system")
-    print("   • Sword + Bow combat (FIXED)")
-    print("✨ All items in ENGLISH!")
-    print("✨ /reset command added!")
-    print("✨ ender_pearl crafting fixed!")
+    print("🔧 FIXES APPLIED:")
+    print("   • scoped_session (Thread-safe)")
+    print("   • threaded=False")
+    print("   • safe_session fixed")
+    print("   • time.sleep reduced to 0.3s")
     print("="*50)
+    
+    # ✅ حذف Webhook
+    try:
+        bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook deleted!")
+    except Exception as e:
+        print(f"⚠️ Webhook warning: {e}")
     
     Thread(target=keep_alive, daemon=True).start()
     
     while True:
         try:
             print("✅ Bot polling started...")
-            bot.infinity_polling(timeout=120, long_polling_timeout=60)
+            bot.infinity_polling(
+                timeout=30,
+                long_polling_timeout=25,
+                none_stop=True
+            )
         except Exception as e:
             print(f"❌ Polling error: {e}")
             print("🔄 Restarting in 10 seconds...")
             time.sleep(10)
             try:
-                bot = telebot.TeleBot(TOKEN)
+                bot.delete_webhook(drop_pending_updates=True)
             except:
                 pass
